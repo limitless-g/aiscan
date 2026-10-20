@@ -1,0 +1,33 @@
+# .gitignore —— 公开仓库不该出现的东西
+
+# 扫描产物：体积大，且含真实目标的漏洞证据
+outputs/
+
+# 本机隔离环境（install.ps1 的产物，每位使用者各自生成）
+.venv/
+venv/
+
+# 授权台账：记录「谁授权扫了哪个目标」，属本机合规凭证，不进仓库
+# （含本体与历史快照 auth-ledger.yaml.bak-<日期>）
+ledger/auth-ledger.yaml
+ledger/auth-ledger.yaml.bak-*
+
+# 凭据与会话（正常落在用户目录 ~/.aiscan/，这里兜底）
+sessions/
+creds/
+*.token
+
+# 日志与临时文件
+*.log
+*.tmp
+*.bak
+_tmp_*
+
+# Python / 打包 / 系统
+__pycache__/
+*.py[cod]
+dist/
+.pytest_cache/
+.DS_Store
+Thumbs.db
+.schedule_state.json

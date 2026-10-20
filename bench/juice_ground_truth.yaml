@@ -1,0 +1,1206 @@
+# ==============================================================================
+# Juice Shop · 已知漏洞基准（ground truth）
+# ==============================================================================
+# 本文件由 bench/juice_gen.py **自动生成**，请勿手工编辑。
+#
+#   · 要换靶场版本 / 补新挑战 → 换 bench/juice-challenges.yml（官方原文）
+#   · 要改「aiscan 能不能检」的判定 → 改 bench/juice_verdicts.py
+# ------------------------------------------------------------------------------
+# 为什么答案表必须这么来
+# ------------------------------------------------------------------------------
+# 召回率只能在「有答案的靶场」上测，且答案不能照着引擎当前的产出写 ——
+# 那样测出来永远是 100%，测的是「引擎是否等于它自己」（红线 30）。
+# 本表的来源是 Juice Shop 官方仓库 data/static/challenges.yml，aiscan 未改一字；
+# 只有 verdict / acceptable_items 是本项目给的，且每条都写了依据。
+#
+# 源: bench/juice-challenges.yml（题库随 Juice Shop 版本发布，见 NOTICE.md）
+# sha256: 8efa070380ab8f39783eb92cbaaf9df67bcee0f1715eee98a06fb1176051c2b7
+# 生成时间: 2026-10-10T21:28:14
+#
+# ------------------------------- 结论层级 -------------------------------------
+# verdict 有五个值，含义见 VERDICT_HELP（生成器内也有副本）：
+#   · auto    黑盒可达且有对应检测体：aiscan 清单里存在声明负责该类问题、且适用性标记（app）在 Juice Shop 上成立的检查项。这是「能力上界」，不是实测命中。
+#   · semi    有对应检测体，但需前置条件：多账号 / 写授权 / 渲染 / 字典 / 带外（OOB）回调。补齐条件后可自动，不补齐则只能落到人工项。
+#   · manual  业务逻辑、多步推理、交互式绕过。按红线 3/32，这类只能作为人工项，标自动等于造假通过。
+#   · gap     能力缺口：aiscan 清单中没有任何一项声明负责该类问题。按红线 14，缺口必须显式列出 —— 读者要把「还没做」和「没问题」分开。
+#   · na      不适用黑盒扫描：需白盒源码、纯 OSINT 推理、Web3/非 HTTP 协议、DoS（红线 11 明确不做）、或非安全性 Bug（整蛊：Shenanigans）。
+#
+# ------------------------------- 怎么读这份表 ---------------------------------
+# 真·召回率的算法与红线保持一致：
+#   分母 = auto + semi + manual + gap   （黑盒 URGENT 判断这类坏账负责人）：
+#          即「这类问题本该被扫出来或被明确记账」
+#   其中 na 不计入分母 —— 让一个黑盒 HTTP 扫描器去查 dykstra 挑战、
+#          OSINT 密保、Web3 合约，不是漏报，是量程之外。
+#   auto   = 能力上界（不是命中）
+#   实测召回率 = 真的那条施工证据报出来了才算，必须由实跑产出,
+#          **本文件不提供任何「已命中」的结论**。
+# ==============================================================================
+
+version: v1
+range: OWASP Juice Shop（外部靶场，需在授权环境运行）
+source_repo: https://github.com/juice-shop/juice-shop
+source_file: data/static/challenges.yml
+source_sha256: "8efa070380ab8f39783eb92cbaaf9df67bcee0f1715eee98a06fb1176051c2b7"
+source_challenges: 116
+
+facts:
+  - key: "passwordHashLeakChallenge"
+    name: "Password Hash Leak"
+    category: "Sensitive Data Exposure"
+    difficulty: 2
+    tags: ""
+    planted: "Obtain the password (hash) of the currently logged-in user directly from a REST API endpoint."
+    acceptable_items: ["WSTG-APIT-03", "EXT-DP-01"]
+    verdict: semi
+    because: "归口按 detect：APIT-03「接口返回超出业务需要的大量字段」是对的；EXT-DP-01 的 PII 正则针对手机/身份证/银行卡，hash 不在模式里，所以只写 APIT-03 为准、DP-01 为可能命中。两者都 app=has_api，Juice Shop 成立。"
+    witness: "匿名 GET /rest/user/whoami 或 /api/Users/{id}，响应里含 password 字段（MD5）。"
+  - key: "restfulXssChallenge"
+    name: "API-only XSS"
+    category: "XSS"
+    difficulty: 3
+    tags: "Danger Zone"
+    planted: "Perform a persisted XSS attack with &lt;iframe src=\"javascript:alert(`xss`)\"&gt; without using the frontend application at all."
+    acceptable_items: ["WSTG-INPV-02"]
+    verdict: semi
+    because: "INPV-02 存储型 XSS，但需要向 API **写入** payload —— 红线 7 的受控写约束（deep + 台账授权 + 6 次封顶）适用，故 semi。"
+    witness: "PUT /api/Products/{id} 把 description 写成 XSS payload。"
+  - key: "accessLogDisclosureChallenge"
+    name: "Access Log"
+    category: "Observability Failures"
+    difficulty: 4
+    tags: ""
+    planted: "Gain access to any access log file of the server."
+    acceptable_items: ["WSTG-CONF-04", "WSTG-INFO-07"]
+    verdict: manual
+    because: "日志路径可达。路径枚举可能撞到，但「这是日志」的定性要人确认，不抬到 auto。"
+    witness: "访问到可读取的访问日志并确认内容性质。"
+  - key: "registerAdminChallenge"
+    name: "Admin Registration"
+    category: "Improper Input Validation"
+    difficulty: 3
+    tags: ""
+    planted: "Register as a user with administrator privileges."
+    acceptable_items: ["WSTG-INPV-20", "WSTG-IDNT-02"]
+    verdict: semi
+    because: "注册时注入 role:admin 字段 —— INPV-20 批量赋值 detect 完全对口，app=has_api 成立。需写操作（注册）→ 受红线 7 约束。"
+    witness: "POST /api/Users 携带 role:\"admin\" → 建出管理员。"
+  - key: "adminSectionChallenge"
+    name: "Admin Section"
+    category: "Broken Access Control"
+    difficulty: 2
+    tags: "Good for Demos"
+    planted: "Access the administration section of the store."
+    acceptable_items: ["WSTG-CONF-05", "WSTG-ATHZ-02"]
+    verdict: auto
+    because: "CONF-05 detect「管理接口枚举」+ ATHZ-02「直接访问受保护资源」。aiscan 有 ADMIN_PATHS 字典 + SPA 路由提取，/administration 是标准路径。"
+    witness: "匿名访问 /#/administration → 管理面板直接可用。"
+  - key: "fileWriteChallenge"
+    name: "Arbitrary File Write"
+    category: "Vulnerable Components"
+    difficulty: 6
+    tags: "Danger Zone/Prerequisite"
+    planted: "Overwrite the Legal Information file."
+    acceptable_items: []
+    verdict: na
+    because: "依赖 CVE 的完整利用链（非黑盒 + Danger Zone）。"
+    witness: "利用组件 CVE 写文件。"
+  - key: "resetPasswordBjoernOwaspChallenge"
+    name: "Bjoern's Favorite Pet"
+    category: "Broken Authentication"
+    difficulty: 3
+    tags: "OSINT"
+    planted: "Reset the password of Bjoern's OWASP account via the Forgot Password mechanism with the original answer to his security question."
+    acceptable_items: []
+    verdict: na
+    because: "OSINT：从公开渠道查出他的宠物名字作为答案。非 HTTP 层缺陷。"
+    witness: "从公开资料查出宠物名，作为密保答案使用。"
+  - key: "tokenSaleChallenge"
+    name: "Blockchain Hype"
+    category: "Security through Obscurity"
+    difficulty: 5
+    tags: "Contraption/Code Analysis/Web3"
+    planted: "Learn about the Token Sale before its official announcement."
+    acceptable_items: []
+    verdict: na
+    because: "官方标 Code Analysis/Web3。"
+    witness: "从源码找到 Web3 相关 afinidad。"
+  - key: "nftUnlockChallenge"
+    name: "NFT Takeover"
+    category: "Sensitive Data Exposure"
+    difficulty: 2
+    tags: "Contraption/Good for Demos/Web3"
+    planted: "Take over the wallet containing our official Soul Bound Token (NFT)."
+    acceptable_items: []
+    verdict: na
+    because: "Web3/钱包接管，非 HTTP。"
+    witness: "通过 Web3 交互接管 NFT。"
+  - key: "nftMintChallenge"
+    name: "Mint the Honey Pot"
+    category: "Improper Input Validation"
+    difficulty: 3
+    tags: "Web3"
+    planted: "Mint the Honey Pot NFT by gathering BEEs from the bee haven."
+    acceptable_items: []
+    verdict: na
+    because: "Web3 合约交互。"
+    witness: "调用合约 mint。"
+  - key: "web3WalletChallenge"
+    name: "Wallet Depletion"
+    category: "Miscellaneous"
+    difficulty: 6
+    tags: "Web3"
+    planted: "Withdraw more ETH from the new wallet than you deposited."
+    acceptable_items: []
+    verdict: na
+    because: "Web3。"
+    witness: "耗尽钱包。"
+  - key: "web3SandboxChallenge"
+    name: "Web3 Sandbox"
+    category: "Broken Access Control"
+    difficulty: 1
+    tags: "Web3"
+    planted: "Find an accidentally deployed code sandbox for writing smart contracts on the fly."
+    acceptable_items: []
+    verdict: na
+    because: "Web3/合约沙箱，非 HTTP 协议面。量程之外。"
+    witness: "通过 Web3 交互笔屿。"
+  - key: "rceChallenge"
+    name: "Blocked RCE DoS"
+    category: "Insecure Deserialization"
+    difficulty: 5
+    tags: "Danger Zone"
+    planted: "Perform a Remote Code Execution that would keep a less hardened application busy forever."
+    acceptable_items: []
+    verdict: na
+    because: "DoS 类，红线 11 明确不做。"
+    witness: "触发反序列化造成拒绝服务。"
+  - key: "captchaBypassChallenge"
+    name: "CAPTCHA Bypass"
+    category: "Broken Anti Automation"
+    difficulty: 3
+    tags: "Brute Force"
+    planted: "Submit 10 or more customer feedbacks within 20 seconds."
+    acceptable_items: ["WSTG-BUSL-07", "EXT-RB-03"]
+    verdict: manual
+    because: "BUSL-07/RB-03 判「有没有验证码」；判它不是判「验证码能不能被绕过」。绕过要解决实际验证码 —— 人也得有工具。"
+    witness: "重放/复用 CAPTCHA 响应绕过限制。"
+  - key: "changePasswordBenderChallenge"
+    name: "Change Bender's Password"
+    category: "Broken Authentication"
+    difficulty: 5
+    tags: ""
+    planted: "Change Bender's password into slurmCl4ssic without using SQL Injection or Forgot Password."
+    acceptable_items: ["WSTG-ATHN-09", "WSTG-ATHZ-03"]
+    verdict: semi
+    because: "口令重置/修改流程未绑定用户。ATHN-09 detect 正对口；需两个账号才能证明「改到别人头上」，降 semi。"
+    witness: "A 会话里 POST 修改 B 的密码 → B 的原密码失效。"
+  - key: "christmasSpecialChallenge"
+    name: "Christmas Special"
+    category: "Injection"
+    difficulty: 4
+    tags: ""
+    planted: "Order the Christmas special offer of 2014."
+    acceptable_items: ["WSTG-INPV-05"]
+    verdict: semi
+    because: "需要通过 SQLi 批量改 product 描述 —— 属有副作用的写。红线 7：受控写必须 deep 档 + 台账 write 授权 + 上限 6 次。不给授权则做不了。"
+    witness: "注入语句更新全部产品描述。"
+  - key: "usernameXssChallenge"
+    name: "CSP Bypass"
+    category: "XSS"
+    difficulty: 4
+    tags: "Danger Zone"
+    planted: "Bypass the Content Security Policy and perform an XSS attack with &lt;script&gt;alert(`xss`)&lt;/script&gt; on a legacy page within the application."
+    acceptable_items: ["WSTG-CONF-12"]
+    verdict: manual
+    because: "CONF-12 只判「CSP 是否缺失/unsafe-inline/通配符」—— 这是策略体检，不是「绕过某个精心配的 CSP 完成 XSS」。后者要人读策略再构造。"
+    witness: "读 CSP 指令 → 找出被放行的域 → 在该域上托管 payload 完成 bypass。"
+  - key: "persistedXssUserChallenge"
+    name: "Client-side XSS Protection"
+    category: "XSS"
+    difficulty: 3
+    tags: "Danger Zone"
+    planted: "Perform a persisted XSS attack with &lt;iframe src=\"javascript:alert(`xss`)\"&gt; bypassing a client-side security mechanism."
+    acceptable_items: ["WSTG-CLNT-01", "WSTG-CONF-12"]
+    verdict: manual
+    because: "需要绕过前端过滤/编码逻辑。客户端防护的绕过要人读 JS 再构造 —— 这是 Blackbox 自动化的经典盲区。"
+    witness: "读 bundle 里过滤函数 → 构造绕过 payload。"
+  - key: "directoryListingChallenge"
+    name: "Confidential Document"
+    category: "Sensitive Data Exposure"
+    difficulty: 1
+    tags: "Good for Demos"
+    planted: "Access a confidential document."
+    acceptable_items: ["WSTG-CONF-09", "WSTG-CONF-04"]
+    verdict: auto
+    because: "CONF-09 detect 明确写了「目录列表开启」，CONF-04 写「归档目录/未被引用的静态文件」。/ftp 开目录列举是黑盒一眼可见的配置项。"
+    witness: "GET /ftp/ → 200 目录列举，含 acquisitions.md。"
+  - key: "localXssChallenge"
+    name: "DOM XSS"
+    category: "XSS"
+    difficulty: 1
+    tags: "Tutorial/Good for Demos"
+    planted: "Perform a DOM XSS attack with &lt;iframe src=\"javascript:alert(`xss`)\"&gt;."
+    acceptable_items: ["WSTG-CLNT-01"]
+    verdict: semi
+    because: "CLNT-01 是 DOM XSS（has_client 成立）。但 Juice Shop 的 sink 要 SPA 渲染后才执行 —— 依赖 render.py（红线 29，deep 档 + 有副作用）。"
+    witness: "把 alert 置入 search params → 渲染后执行。"
+  - key: "dbSchemaChallenge"
+    name: "Database Schema"
+    category: "Injection"
+    difficulty: 3
+    tags: ""
+    planted: "Exfiltrate the entire DB schema definition via SQL Injection."
+    acceptable_items: ["WSTG-INPV-05"]
+    verdict: auto
+    because: "搜索接口的 UNION SELECT，sqlmap 在 standard 档能出 union-based 结果。"
+    witness: "GET /rest/products/search?q=')) UNION SELECT ... -- → 响应用数据。"
+  - key: "deprecatedInterfaceChallenge"
+    name: "Deprecated Interface"
+    category: "Security Misconfiguration"
+    difficulty: 2
+    tags: "Contraption/Prerequisite"
+    planted: "Use a deprecated B2B interface that was not properly shut down."
+    acceptable_items: ["WSTG-CONF-02", "WSTG-APIT-01"]
+    verdict: manual
+    because: "「发现并正确使用被弃用的 B2B 接口」涉及 legacy 协议细节，APIT-01 能枚举到路由，但是否「弃用且仍开放」需要语义判断。"
+    witness: "向弃用端点提交订单成功。"
+  - key: "easterEggLevelOneChallenge"
+    name: "Easter Egg"
+    category: "Broken Access Control"
+    difficulty: 4
+    tags: "Shenanigans/Contraption/Good for Demos"
+    planted: "Find the hidden easter egg."
+    acceptable_items: []
+    verdict: na
+    because: "官方自己标 Shenanigans —— 找隐藏彩蛋，不是漏洞。"
+    witness: "按官方引导打开隐藏页面。"
+  - key: "emailLeakChallenge"
+    name: "Email Leak"
+    category: "Sensitive Data Exposure"
+    difficulty: 5
+    tags: ""
+    planted: "Perform an unwanted information disclosure by accessing data cross-domain."
+    acceptable_items: ["EXT-DP-01", "EXT-DP-02"]
+    verdict: semi
+    because: "依赖「响应体里能不能抓到 email」。DP-01 的 PII 模式里 email 通常覆盖；但这是 attaches for their feedback — 需要走到具体端点。app=always 成立。"
+    witness: "匿名 GET /api/Feedbacks 或用户相关端点，响应含他人 email。"
+  - key: "emptyUserRegistration"
+    name: "Empty User Registration"
+    category: "Improper Input Validation"
+    difficulty: 2
+    tags: ""
+    planted: "Register a user with an empty email and password."
+    acceptable_items: ["WSTG-IDNT-02"]
+    verdict: semi
+    because: "空值/越界注册。同上，需写操作。"
+    witness: "提交空 email / 空 password 建号成功。"
+  - key: "ephemeralAccountantChallenge"
+    name: "Ephemeral Accountant"
+    category: "Injection"
+    difficulty: 4
+    tags: ""
+    planted: "Log in with the (non-existing) accountant acc0unt4nt@juice-sh.op without ever registering that user."
+    acceptable_items: ["WSTG-INPV-05"]
+    verdict: semi
+    because: "注入点在进一步完善处（订单/评论的 author 字段），非匿名可达 —— 需登录后触发（has_login 成立），故 semi。"
+    witness: "登录态下把作者字段改成特定值即永久生效，说明存在持久注入点。"
+  - key: "errorHandlingChallenge"
+    name: "Error Handling"
+    category: "Security Misconfiguration"
+    difficulty: 1
+    tags: "Prerequisite"
+    planted: "Provoke an error that is neither very gracefully nor consistently handled."
+    acceptable_items: ["WSTG-ERRH-01", "WSTG-ERRH-02"]
+    verdict: auto
+    because: "ERRH-01/02 detect「触发异常返回原始错误/数据库语句/内部路径」+「堆栈跟踪泄露」。Juice Shop 的 /rest/qrcode-error-correction 是标准 course of failure 端点。"
+    witness: "构造非法 qr code 值 → 响应含完整堆栈。"
+  - key: "manipulateClockChallenge"
+    name: "Expired Coupon"
+    category: "Improper Input Validation"
+    difficulty: 4
+    tags: ""
+    planted: "Successfully redeem an expired campaign coupon code."
+    acceptable_items: ["WSTG-BUSL-05"]
+    verdict: semi
+    because: "BUSL-05「优惠券无次数/有效期限制」detect 正对口；但需要真正走到结账流程，属多步且带副作用 → semi。"
+    witness: "使用已过期优惠券结账成功。"
+  - key: "extraLanguageChallenge"
+    name: "Extra Language"
+    category: "Broken Anti Automation"
+    difficulty: 5
+    tags: "Brute Force"
+    planted: "Retrieve the language file that never made it into production."
+    acceptable_items: ["WSTG-CONF-15"]
+    verdict: manual
+    because: "隐藏语言包需要通过特定兰姆达/请求构造解锁，不是常规配置缺陷。"
+    witness: "构造请求/ host 取出隐藏语言资源。"
+  - key: "feedbackChallenge"
+    name: "Five-Star Feedback"
+    category: "Broken Access Control"
+    difficulty: 2
+    tags: ""
+    planted: "Get rid of all 5-star customer feedback."
+    acceptable_items: ["WSTG-ATHZ-03", "WSTG-APIT-02"]
+    verdict: semi
+    because: "删除他人 feedback —— 需要两个账号 + 写操作。"
+    witness: "A 账号 DELETE /api/Feedbacks/{B 的 id} → 200。"
+  - key: "forgedCouponChallenge"
+    name: "Forged Coupon"
+    category: "Cryptographic Issues"
+    difficulty: 6
+    tags: "Good for Demos/Code Analysis"
+    planted: "Forge a coupon code that gives you a discount of at least 80%."
+    acceptable_items: []
+    verdict: na
+    because: "官方标 Code Analysis：需要算出 coupon 的签名/编码规则。"
+    witness: "算出并伪造有效优惠券码。"
+  - key: "forgedFeedbackChallenge"
+    name: "Forged Feedback"
+    category: "Broken Access Control"
+    difficulty: 3
+    tags: "Tutorial"
+    planted: "Post some feedback in another user's name."
+    acceptable_items: ["WSTG-BUSL-02", "WSTG-ATHZ-03"]
+    verdict: semi
+    because: "冒名提交（不校验 authorship）。需写操作 → 受红线 7 写约束。差分检测（business.py）在 deep 档能给出证据，故 semi 而非 manual。"
+    witness: "POST /api/Feedbacks 携带 UserId 字段 → 以他人身份留下评论。"
+  - key: "forgedReviewChallenge"
+    name: "Forged Review"
+    category: "Broken Access Control"
+    difficulty: 3
+    tags: ""
+    planted: "Post a product review as another user or edit any user's existing review."
+    acceptable_items: ["WSTG-BUSL-02", "WSTG-ATHZ-03"]
+    verdict: semi
+    because: "同 Forged Feedback，另一类 review API。"
+    witness: "PUT /api/Products/{id}/reviews 携带 author 字段。"
+  - key: "jwtForgedChallenge"
+    name: "Forged Signed JWT"
+    category: "Vulnerable Components"
+    difficulty: 6
+    tags: ""
+    planted: "Forge an almost properly RSA-signed JWT token that impersonates the (non-existing) user rsa_lord@juice-sh.op."
+    acceptable_items: ["WSTG-SESS-10"]
+    verdict: semi
+    because: "同 Unsigned JWT —— 这条还要从 jwks.json 取公钥并用 Kid mistakes 伪造。静态分析能发现「用了 JWKS」，伪造+验证的那一步没有自动化执行体。"
+    witness: "用 JWKS 公钥伪造签名后的 token 被服务端接受。"
+  - key: "forgottenDevBackupChallenge"
+    name: "Forgotten Developer Backup"
+    category: "Sensitive Data Exposure"
+    difficulty: 4
+    tags: "Contraption/Good for Demos/Prerequisite"
+    planted: "Access a developer's forgotten backup file."
+    acceptable_items: ["WSTG-CONF-03", "WSTG-CONF-04"]
+    verdict: auto
+    because: "CONF-03 detect 写死「.bak/.old/.swp 等备份扩展名」，命中线完全一致。"
+    witness: "GET /ftp/package.json.bak → 200。"
+  - key: "forgottenBackupChallenge"
+    name: "Forgotten Sales Backup"
+    category: "Sensitive Data Exposure"
+    difficulty: 4
+    tags: "Contraption"
+    planted: "Access a salesman's forgotten backup file."
+    acceptable_items: ["WSTG-CONF-03", "WSTG-CONF-04"]
+    verdict: auto
+    because: "同 Dev Backup，都是备份扩展名 + 归档目录。"
+    witness: "GET /ftp/coupons_2013.md.bak → 200。"
+  - key: "typosquattingAngularChallenge"
+    name: "Frontend Typosquatting"
+    category: "Vulnerable Components"
+    difficulty: 5
+    tags: ""
+    planted: "Inform the shop about a typosquatting imposter that dug itself deep into the frontend. (Mention the exact name of the culprit)"
+    acceptable_items: ["EXT-SC-09"]
+    verdict: semi
+    because: "EXT-SC-09（2026-10-10 新增）已能离线做包名近似比对（编辑距离 ≤1 + -js/node- 伪装前后缀），「没有任何 typosquatting 检查项」这条缺口已不成立，故不再记 gap。但命中前提是**真拿到依赖清单**：Juice Shop 的 /package.json 返回 SPA 首页（不是 JSON），/ftp/package.json.bak 返回 403，本轮 EXT-SC-09 落到「未取得依赖清单」的覆盖度说明 → 未命中，记 semi。"
+    witness: "比对 npm 包名与官方 registry 的近似包。"
+  - key: "ghostLoginChallenge"
+    name: "GDPR Data Erasure"
+    category: "Broken Authentication"
+    difficulty: 3
+    tags: ""
+    planted: "Log in with Chris' erased user account."
+    acceptable_items: ["WSTG-BUSL-06"]
+    verdict: manual
+    because: "「用错误的删 Because 请求造成数据实际被删」是流程缺陷，BUSL-06「工作流绕过」对口，但要人理解 GDPR 移除流程再證。"
+    witness: "提交非法 erasure 请求 → 数据真被删。"
+  - key: "dataExportChallenge"
+    name: "GDPR Data Theft"
+    category: "Sensitive Data Exposure"
+    difficulty: 4
+    tags: ""
+    planted: "Steal someone else's personal data without using Injection."
+    acceptable_items: ["EXT-DP-03", "WSTG-APIT-03"]
+    verdict: semi
+    because: "EXT-DP-03 detect 「导出接口未限制数据范围」正对 over-export。app=has_download —— Juice Shop 有数据导出端点（小 round trip）。"
+    witness: "调用数据导出端点拿到全表而非当前用户数据。"
+  - key: "httpHeaderXssChallenge"
+    name: "HTTP-Header XSS"
+    category: "XSS"
+    difficulty: 4
+    tags: "Danger Zone"
+    planted: "Perform a persisted XSS attack with &lt;iframe src=\"javascript:alert(`xss`)\"&gt; through an HTTP header."
+    acceptable_items: ["WSTG-INPV-01", "WSTG-CLNT-03"]
+    verdict: semi
+    because: "反射点在 HTTP 头（如 User-Agent/True-Client-IP）而非普通参数。检测器要打到「header 也是输入点」才成立 —— INFO-06 会枚举 header 输入点，但能否污染这个具体端点不确定，降 semi。"
+    witness: "把恶意值放进特定请求头 → 出现在响应里。"
+  - key: "continueCodeChallenge"
+    name: "Imaginary Challenge"
+    category: "Cryptographic Issues"
+    difficulty: 6
+    tags: "Shenanigans/Code Analysis"
+    planted: "Solve challenge #999. Unfortunately, this challenge does not exist."
+    acceptable_items: []
+    verdict: na
+    because: "官方标 Shenanigans —— 不存在的视频/54 Challenges。"
+    witness: "按茧引导完成。"
+  - key: "dlpPasswordSprayingChallenge"
+    name: "Leaked Access Logs"
+    category: "Observability Failures"
+    difficulty: 5
+    tags: "OSINT"
+    planted: "Dumpster dive the Internet for a leaked password and log in to the original user account it belongs to. (Creating a new account with the same password does not qualify as a solution.)"
+    acceptable_items: ["WSTG-CONF-04", "WSTG-CONF-09"]
+    verdict: manual
+    because: "日志落在特定路径且内容是「能打开但看不懂」的流水，判断它是不是日志要靠人。路径枚举若撞到可命中 CONF-04；但命中率低，不抬到 auto。"
+    witness: "需枚举到 /support/logs 之类路径并人工确认内容性质。"
+  - key: "dlpPastebinDataLeakChallenge"
+    name: "Leaked Unsafe Product"
+    category: "Sensitive Data Exposure"
+    difficulty: 4
+    tags: "Shenanigans/OSINT"
+    planted: "Identify an unsafe product that was removed from the shop and inform the shop which ingredients are dangerous."
+    acceptable_items: []
+    verdict: na
+    because: "官方标 Shenanigans/OSINT。"
+    witness: "按茧查找隐藏商品。"
+  - key: "typosquattingNpmChallenge"
+    name: "Legacy Typosquatting"
+    category: "Vulnerable Components"
+    difficulty: 4
+    tags: ""
+    planted: "Inform the shop about a typosquatting trick it has been a victim of at least in v6.2.0-SNAPSHOT. (Mention the exact name of the culprit)"
+    acceptable_items: ["EXT-SC-09"]
+    verdict: semi
+    because: "同 Frontend Typosquatting —— 归口 EXT-SC-09（新增），命中与否同样取决于能否取得依赖清单。"
+    witness: "比对 legacy 包名。"
+  - key: "loginAdminChallenge"
+    name: "Login Admin"
+    category: "Injection"
+    difficulty: 2
+    tags: "Tutorial/Good for Demos"
+    planted: "Log in with the administrator's user account."
+    acceptable_items: ["WSTG-INPV-05"]
+    verdict: auto
+    because: "经典的登录框 SQLi（' or 1=1--）。INPV-05 detect 覆盖布尔盲注/报错/联合/堆叠；sqlmap_probe.py 会在 standard 档以上对登录表单跑。"
+    witness: "POST /rest/user/login {email:\"admin'--\"} → 200 拿到 JWT。"
+  - key: "loginAmyChallenge"
+    name: "Login Amy"
+    category: "Sensitive Data Exposure"
+    difficulty: 3
+    tags: "OSINT"
+    planted: "Log in with Amy's original user credentials. (This could take 93.83 billion trillion trillion centuries to brute force, but luckily she did not read the \"One Important Final Note\")"
+    acceptable_items: []
+    verdict: na
+    because: "OSINT 推导同侪关系得到口令。非 HTTP 层。"
+    witness: "从公开线索推导出密码。"
+  - key: "loginBenderChallenge"
+    name: "Login Bender"
+    category: "Injection"
+    difficulty: 3
+    tags: "Tutorial"
+    planted: "Log in with Bender's user account."
+    acceptable_items: ["WSTG-INPV-05"]
+    verdict: auto
+    because: "同为登录框 SQLi。"
+    witness: "POST /rest/user/login {email:\"bender@...'--\"}。"
+  - key: "oauthUserPasswordChallenge"
+    name: "Login Bjoern"
+    category: "Broken Authentication"
+    difficulty: 4
+    tags: "Code Analysis"
+    planted: "Log in with Bjoern's Gmail account without previously changing his password, applying SQL Injection, or hacking his Google account."
+    acceptable_items: []
+    verdict: na
+    because: "需要拿到并破解他的 MD5 口令散列（OSINT/离线爆破），非服务端可判定缺陷。"
+    witness: "对泄露的 MD5 做字典还原。"
+  - key: "loginJimChallenge"
+    name: "Login Jim"
+    category: "Injection"
+    difficulty: 3
+    tags: "Tutorial"
+    planted: "Log in with Jim's user account."
+    acceptable_items: ["WSTG-INPV-05"]
+    verdict: auto
+    because: "同为登录框 SQLi。"
+    witness: "POST /rest/user/login {email:\"jim@example.com'--\"}。"
+  - key: "loginRapperChallenge"
+    name: "Login MC SafeSearch"
+    category: "Sensitive Data Exposure"
+    difficulty: 2
+    tags: "Shenanigans/OSINT"
+    planted: "Log in with MC SafeSearch's original user credentials without applying SQL Injection or any other bypass."
+    acceptable_items: []
+    verdict: na
+    because: "官方标 OSINT/Shenanigans：需从歌词等公开线索推出口令。"
+    witness: "从公开歌词线索推导出账户口令。"
+  - key: "loginSupportChallenge"
+    name: "Login Support Team"
+    category: "Security Misconfiguration"
+    difficulty: 6
+    tags: "Brute Force/Code Analysis"
+    planted: "Log in with the support team's original user credentials without applying SQL Injection or any other bypass."
+    acceptable_items: []
+    verdict: na
+    because: "官方标 Brute Force + Code Analysis：需要源码里的一串凭据。黑盒 + 无字典时不成立。"
+    witness: "需先用源码里的信息撞/直接得到账户。"
+  - key: "basketManipulateChallenge"
+    name: "Manipulate Basket"
+    category: "Broken Access Control"
+    difficulty: 3
+    tags: ""
+    planted: "Put an additional product into another user's shopping basket."
+    acceptable_items: ["WSTG-ATHZ-04", "WSTG-BUSL-03"]
+    verdict: manual
+    because: "「把别人的商品塞进自己篮子」的确认需要理解业务语义：同样一串响应，什么叫「成功」只有人能判断。红线 3/32：业务正确性只能人判。"
+    witness: "持有 A 的 basket 调用两条 basketId 不匹配的 PUT → 断言 amalgam。"
+  - key: "misplacedSignatureFileChallenge"
+    name: "Misplaced Signature File"
+    category: "Observability Failures"
+    difficulty: 4
+    tags: "Good Practice/Contraption"
+    planted: "Access a misplaced SIEM signature file."
+    acceptable_items: ["WSTG-CONF-03", "WSTG-CONF-04"]
+    verdict: auto
+    because: "/ftp 下可疑文件，属 CONF-03 扩展名清单（.yml 未必在其中）。保守起见仍按 CONF-04「归档目录」为主归口。"
+    witness: "GET /ftp/suspicious_errors.yml → 200。"
+  - key: "timingAttackChallenge"
+    name: "Multiple Likes"
+    category: "Broken Anti Automation"
+    difficulty: 6
+    tags: ""
+    planted: "Like any review at least three times as the same user."
+    acceptable_items: ["WSTG-BUSL-05", "EXT-RB-01"]
+    verdict: manual
+    because: "「同一富强: 一个账号只能点赞一次」的绕过是典型inctrl multi-step；RB-01 能判「有无频控」但判不了「频控可绕过」。"
+    witness: "绕过一次性点赞限制。"
+  - key: "easterEggLevelTwoChallenge"
+    name: "Nested Easter Egg"
+    category: "Cryptographic Issues"
+    difficulty: 4
+    tags: "Shenanigans/Good for Demos"
+    planted: "Apply some advanced cryptanalysis to find the real easter egg."
+    acceptable_items: []
+    verdict: na
+    because: "官方标 Shenanigans。"
+    witness: "找到多层嵌套彩蛋。"
+  - key: "noSqlCommandChallenge"
+    name: "NoSQL DoS"
+    category: "Injection"
+    difficulty: 4
+    tags: "Danger Zone"
+    planted: "Let the server sleep for some time. (It has done more than enough hard work for you)"
+    acceptable_items: []
+    verdict: gap
+    because: "两条硬约束叠加：①清单 INPV 止于 23（不安全反序列化），没有 NoSQL 注入项；②这是 DoS，红线 11 明确「DoS 不列攻击目标」。显式记为缺口，不许算成没问题。"
+    witness: "向 review API 提交 $where 类负载使服务不可用。"
+  - key: "noSqlOrdersChallenge"
+    name: "NoSQL Exfiltration"
+    category: "Injection"
+    difficulty: 5
+    tags: "Danger Zone"
+    planted: "All your orders are belong to us! Even the ones which don't."
+    acceptable_items: []
+    verdict: gap
+    because: "aiscan 没有 NoSQL 注入检测体 —— 清单层面的缺口（红线 14）。【易误判提醒】全库 grep mongodb **是有命中的**，但那几处都不是注入检测：engine/checks/net.py 与 base.py 把 27017 当**端口暴露**识别服务名；extras.py 把 MongoDB 算作**未授权访问面**；nuclei_map.py 里它和 redis/mysql 并列 在 exposed-panels 分类。也就是说「27017 开着」会被 EXT-CL-02 上报，但「$ne 操作符取到他人数据」检测不到。补法：新增 WSTG-INPV-24 NoSQL 注入项并绑执行体。"
+    witness: "更新数据 API 提交 {\"$ne\": \"\"} 取回他人数据。"
+  - key: "noSqlReviewsChallenge"
+    name: "NoSQL Manipulation"
+    category: "Injection"
+    difficulty: 4
+    tags: ""
+    planted: "Update multiple product reviews at the same time."
+    acceptable_items: []
+    verdict: gap
+    because: "同 NoSQL Exfiltration —— INPV 系列里没有任何一项声明负责 NoSQL 语法注入。"
+    witness: "利用 $ne 更新他人 review。"
+  - key: "redirectCryptoCurrencyChallenge"
+    name: "Outdated Allowlist"
+    category: "Unvalidated Redirects"
+    difficulty: 1
+    tags: "Code Analysis"
+    planted: "Let us redirect you to one of our crypto currency addresses which are not promoted any longer."
+    acceptable_items: []
+    verdict: na
+    because: "官方标 Code Analysis：需要对源码里的 allowlist 版本做比对。"
+    witness: "对照旧版 allowlist 找出可放过域名。"
+  - key: "weakPasswordChallenge"
+    name: "Password Strength"
+    category: "Broken Authentication"
+    difficulty: 2
+    tags: "Brute Force/Tutorial"
+    planted: "Log in with the administrator's user credentials without previously changing them or applying SQL Injection."
+    acceptable_items: ["WSTG-ATHN-02"]
+    verdict: semi
+    because: "ATHN-02「默认凭据」—— 但需要一份命中 answers 的字典。aiscan 的 sessionpool 支持配置凭据与默认口令表；字典内容决定成败，降 semi。"
+    witness: "用配置字典撞出弱口令账户。"
+  - key: "negativeOrderChallenge"
+    name: "Payback Time"
+    category: "Improper Input Validation"
+    difficulty: 3
+    tags: ""
+    planted: "Place an order that makes you rich."
+    acceptable_items: ["WSTG-BUSL-03", "WSTG-ATHZ-04"]
+    verdict: manual
+    because: "负购物篮/非法金额。BUSL-03 detect「关键参数客户端提交且服务端不重算」对口；但凑出一个「总价为负还要能结账」的具体序列是典型商业中心推理 → manual。"
+    witness: "把购物篮改成负数总额并完成结账。"
+  - key: "premiumPaywallChallenge"
+    name: "Premium Paywall"
+    category: "Cryptographic Issues"
+    difficulty: 6
+    tags: "Shenanigans"
+    planted: "💎💎💎💎💎 ₿ Unlock Premium Challenge to access exclusive content."
+    acceptable_items: []
+    verdict: na
+    because: "官方标 Shenanigans：纯前端/客户端逻辑绕过。"
+    witness: "跳过付费墙 UI。"
+  - key: "privacyPolicyChallenge"
+    name: "Privacy Policy"
+    category: "Miscellaneous"
+    difficulty: 1
+    tags: "Good Practice/Tutorial/Good for Demos"
+    planted: "Read our privacy policy."
+    acceptable_items: []
+    verdict: na
+    because: "官方标 Good Practice/Tutorial，非漏洞。"
+    witness: "阅读隐私政策。"
+  - key: "privacyPolicyProofChallenge"
+    name: "Privacy Policy Inspection"
+    category: "Security through Obscurity"
+    difficulty: 3
+    tags: "Shenanigans/Good for Demos"
+    planted: "Prove that you actually read our privacy policy."
+    acceptable_items: []
+    verdict: na
+    because: "官方标 Shenanigans。"
+    witness: "检查隐私政策里隐藏信息。"
+  - key: "changeProductChallenge"
+    name: "Product Tampering"
+    category: "Broken Access Control"
+    difficulty: 3
+    tags: ""
+    planted: "Change the href of the link within the OWASP SSL Advanced Forensic Tool (O-Saft) product description into https://owasp.slack.com."
+    acceptable_items: ["WSTG-BUSL-02", "WSTG-ATHZ-04", "WSTG-INPV-05"]
+    verdict: semi
+    because: "改他人产品描述。官方提示是 SQLi 路径也能达到；若走 write 路线则受红线 7 约束。"
+    witness: "PUT /api/Products/{id} 改 description/image。"
+  - key: "reflectedXssChallenge"
+    name: "Reflected XSS"
+    category: "XSS"
+    difficulty: 2
+    tags: "Tutorial/Danger Zone/Good for Demos"
+    planted: "Perform a reflected XSS attack with &lt;iframe src=\"javascript:alert(`xss`)\"&gt;."
+    acceptable_items: ["WSTG-INPV-01"]
+    verdict: auto
+    because: "INPV-01 detect 「输入在响应中原样回显且未做上下文编码」。搜索接口 + 尖括号回显是典型的 auto 命中场景。"
+    witness: "GET /#/search?q= → 报错/日志确认。"
+  - key: "passwordRepeatChallenge"
+    name: "Repetitive Registration"
+    category: "Improper Input Validation"
+    difficulty: 1
+    tags: ""
+    planted: "Follow the DRY principle while registering a user."
+    acceptable_items: ["WSTG-IDNT-02", "EXT-RB-03"]
+    verdict: semi
+    because: "重复注册/批量注册。IDNT-02 detect 明写「批量注册」。但会产生副作用（建账号），受红线 7 写约束。"
+    witness: "绕过客户端限制重复提交相同用户。"
+  - key: "resetPasswordBenderChallenge"
+    name: "Reset Bender's Password"
+    category: "Broken Authentication"
+    difficulty: 4
+    tags: "OSINT"
+    planted: "Reset Bender's password via the Forgot Password mechanism with the original answer to his security question."
+    acceptable_items: []
+    verdict: na
+    because: "OSINT 密保问题。"
+    witness: "从公开信息推出密保答案。"
+  - key: "resetPasswordBjoernChallenge"
+    name: "Reset Bjoern's Password"
+    category: "Broken Authentication"
+    difficulty: 5
+    tags: "OSINT"
+    planted: "Reset the password of Bjoern's internal account via the Forgot Password mechanism with the original answer to his security question."
+    acceptable_items: []
+    verdict: na
+    because: "OSINT + MD5 散列还原（同 Login Bjoern）。"
+    witness: "推出密保答案或还原散列。"
+  - key: "resetPasswordJimChallenge"
+    name: "Reset Jim's Password"
+    category: "Broken Authentication"
+    difficulty: 3
+    tags: "OSINT"
+    planted: "Reset Jim's password via the Forgot Password mechanism with the original answer to his security question."
+    acceptable_items: []
+    verdict: na
+    because: "OSINT 密保问题。"
+    witness: "推出密保答案。"
+  - key: "resetPasswordMortyChallenge"
+    name: "Reset Morty's Password"
+    category: "Broken Anti Automation"
+    difficulty: 5
+    tags: "OSINT/Brute Force"
+    planted: "Reset Morty's password via the Forgot Password mechanism with his obfuscated answer to his security question."
+    acceptable_items: []
+    verdict: na
+    because: "OSINT + Brute Force。"
+    witness: "推出密保答案。"
+  - key: "retrieveBlueprintChallenge"
+    name: "Retrieve Blueprint"
+    category: "Sensitive Data Exposure"
+    difficulty: 5
+    tags: ""
+    planted: "Deprive the shop of earnings by downloading the blueprint for one of its products."
+    acceptable_items: ["WSTG-CONF-03", "WSTG-CONF-04", "WSTG-INFO-05"]
+    verdict: auto
+    because: "属于归档目录 + 未引用静态文件。"
+    witness: "GET /ftp/juice.crt 系列 / blueprint 文件 → 200。"
+  - key: "ssrfChallenge"
+    name: "SSRF"
+    category: "Broken Access Control"
+    difficulty: 6
+    tags: "Code Analysis"
+    planted: "Request a hidden resource on server through server."
+    acceptable_items: ["WSTG-INPV-19", "EXT-CL-01"]
+    verdict: semi
+    because: "INPV-19 detect「URL/回调参数可发起服务端请求」对口。但**证明**要带外（OOB）回调服务 —— 没有 OOB 监听器时最多只能判断「接受了外部 URL」，确认不了请求真发出去了（红线 9：孤证不能当结论）。"
+    witness: "把 avatar URL 指向攻击者主机 → 收到来自服务端的请求。"
+  - key: "sstiChallenge"
+    name: "SSTi"
+    category: "Injection"
+    difficulty: 6
+    tags: "Contraption/Danger Zone/Code Analysis"
+    planted: "Infect the server with juicy malware by abusing arbitrary command execution."
+    acceptable_items: ["WSTG-INPV-18"]
+    verdict: semi
+    because: "INPV-18 detect 明写「Jinja2 / Twig / FreeMarker 等模板渲染」。Juice Shop 的 SSTI 在 profile image URL 字段，需登录态+特定注入点，降 semi。"
+    witness: "username 置为模板表达式，用户名渲染处执行。"
+  - key: "scoreBoardChallenge"
+    name: "Score Board"
+    category: "Miscellaneous"
+    difficulty: 1
+    tags: "Tutorial/Code Analysis"
+    planted: "Find the carefully hidden 'Score Board' page."
+    acceptable_items: ["WSTG-CONF-05", "WSTG-APIT-01"]
+    verdict: auto
+    because: "隐藏分数板对外开放。路径枚举 + SPA 路由提取能直接找到 /score-board。（ground_truth.yaml 头部「坑一」提醒：这类命中报的是路径，不是 .js URL。）"
+    witness: "GET /#/score-board → 200。"
+  - key: "securityPolicyChallenge"
+    name: "Security Policy"
+    category: "Miscellaneous"
+    difficulty: 2
+    tags: "Good Practice"
+    planted: "Behave like any \"white-hat\" should before getting into the action."
+    acceptable_items: ["WSTG-INFO-03"]
+    verdict: auto
+    because: "INFO-03 detect 明写「robots.txt / sitemap.xml / .well-known / security.txt」。直接对口。"
+    witness: "GET /.well-known/security.txt → 200。"
+  - key: "persistedXssFeedbackChallenge"
+    name: "Server-side XSS Protection"
+    category: "XSS"
+    difficulty: 4
+    tags: "Danger Zone"
+    planted: "Perform a persisted XSS attack with &lt;iframe src=\"javascript:alert(`xss`)\"&gt; bypassing a server-side security mechanism."
+    acceptable_items: ["WSTG-INPV-01"]
+    verdict: manual
+    because: "服务端 sanitizer 的绕过同样需要人机迭代，自动化只会报「被过滤了」。"
+    witness: "迭代 payload 绕过服务端黑名单。"
+  - key: "hiddenImageChallenge"
+    name: "Steganography"
+    category: "Security through Obscurity"
+    difficulty: 4
+    tags: "Shenanigans"
+    planted: "Rat out a notorious character hiding in plain sight in the shop. (Mention the exact name of the character)"
+    acceptable_items: []
+    verdict: na
+    because: "官方标 Shenanigans：图片隐写，非 HTTP 层缺陷。"
+    witness: "从图片提取隐藏数据。"
+  - key: "rceOccupyChallenge"
+    name: "Successful RCE DoS"
+    category: "Insecure Deserialization"
+    difficulty: 6
+    tags: "Danger Zone"
+    planted: "Perform a Remote Code Execution that occupies the server for a while without using infinite loops."
+    acceptable_items: []
+    verdict: na
+    because: "DoS 类，红线 11 明确不做。"
+    witness: "触发反序列化造成拒绝服务。"
+  - key: "supplyChainAttackChallenge"
+    name: "Supply Chain Attack"
+    category: "Vulnerable Components"
+    difficulty: 5
+    tags: "OSINT"
+    planted: "Inform the development team about a danger to some of their credentials. (Send them the URL of the original report or an assigned CVE or another identifier of this vulnerability)"
+    acceptable_items: []
+    verdict: na
+    because: "官方标 OSINT：需要比对 external dependency 的来源真实性。"
+    witness: "验证某个依赖实际来自恶意 fork。"
+  - key: "twoFactorAuthUnsafeSecretStorageChallenge"
+    name: "Two Factor Authentication"
+    category: "Broken Authentication"
+    difficulty: 5
+    tags: ""
+    planted: "Solve the 2FA challenge for user \"wurstbrot\". (Disabling, bypassing or overwriting his 2FA settings does not count as a solution)"
+    acceptable_items: ["WSTG-ATHN-11"]
+    verdict: manual
+    because: "ATHN-11 detect 写了 MFA 弱点的范畴，但**验证**需要 TOTP 爆破或分子逻辑，属于需要人参与的多步操作。"
+    witness: "枚举 TOTP 重置受害者 2FA。"
+  - key: "jwtUnsignedChallenge"
+    name: "Unsigned JWT"
+    category: "Vulnerable Components"
+    difficulty: 5
+    tags: ""
+    planted: "Forge an essentially unsigned JWT token that impersonates the (non-existing) user jwtn3d@juice-sh.op."
+    acceptable_items: ["WSTG-SESS-10"]
+    verdict: semi
+    because: "SESS-10 detect 明写「alg 可改为 none / HS256 弱密钥 / 未校验签名与过期 / kid 注入」—— 归口完全对口。但 session.py 的 WSTG-SESS-10 做的是**解析采集到的 token 做静态结构分析**（alg 字段、缺失 exp 等），不会**伪造一个 alg=none 的 token 再拿去访问接口**。差一步就是「疑似」和「证明」的区别（红线 1：通过只能来自真实执行），故 semi 不抬 auto。"
+    witness: "取到的 token 头部 alg=none，伪造后仍能通过校验。"
+  - key: "uploadSizeChallenge"
+    name: "Upload Size"
+    category: "Improper Input Validation"
+    difficulty: 3
+    tags: ""
+    planted: "Upload a file larger than 100 kB."
+    acceptable_items: ["WSTG-BUSL-08", "EXT-RB-02"]
+    verdict: semi
+    because: "BUSL-08/RB-02 detect「文件大小无限制」。app=has_upload 成立。需上传 → 受红线 7 写约束。"
+    witness: "上传超预期大小的头像成功。"
+  - key: "uploadTypeChallenge"
+    name: "Upload Type"
+    category: "Improper Input Validation"
+    difficulty: 3
+    tags: ""
+    planted: "Upload a file that has no .pdf or .zip extension."
+    acceptable_items: ["WSTG-BUSL-08"]
+    verdict: semi
+    because: "MIME/内容校验缺失。同上。"
+    witness: "上传非 PDF 的营业执照文件成功。"
+  - key: "unionSqlInjectionChallenge"
+    name: "User Credentials"
+    category: "Injection"
+    difficulty: 4
+    tags: ""
+    planted: "Retrieve a list of all user credentials via SQL Injection."
+    acceptable_items: ["WSTG-INPV-05"]
+    verdict: auto
+    because: "同上，UNION 查询把 Users 表拖出来。sqlmap 阶要 very --level/risk 但被限制到 3/2 下界内。注意红线 27：sqlmap 的 --risk/--level 有数值钳，深 schema dump 可能拿不到，故命中不确定。"
+    witness: "搜索接口 UNION SELECT 出 Users 表的 email/password。"
+  - key: "videoXssChallenge"
+    name: "Video XSS"
+    category: "XSS"
+    difficulty: 6
+    tags: "Danger Zone"
+    planted: "Embed an XSS payload &lt;/script&gt;&lt;script&gt;alert(`xss`)&lt;/script&gt; into our promo video."
+    acceptable_items: ["WSTG-BUSL-09"]
+    verdict: manual
+    because: "需要上传特制视频 + 绕过 SSRF allowlist 到攻击者的 subtitles。多步、危险、且 payload artisanal。"
+    witness: "上传带 HLS/manifest 的视频，誓执行侧加载外部字幕。"
+  - key: "basketAccessChallenge"
+    name: "View Basket"
+    category: "Broken Access Control"
+    difficulty: 2
+    tags: "Tutorial/Good for Demos"
+    planted: "View another user's shopping basket."
+    acceptable_items: ["WSTG-ATHZ-04", "WSTG-APIT-02"]
+    verdict: semi
+    because: "ATHZ-04 / APIT-02 都是 IDOR/BOLA —— 归口准确。但**证据必须来自两个不同账号的比对**（READ-04 路径 requires=[\"accounts\"]），Juice Shop 需要真注册两个账号，sessionpool 配置到位才行，故 semi。"
+    witness: "用 A 账号的 token 读 basket/{B_id} → 返回 B 的内容。"
+  - key: "knownVulnerableComponentChallenge"
+    name: "Vulnerable Library"
+    category: "Vulnerable Components"
+    difficulty: 4
+    tags: "OSINT"
+    planted: "Inform the shop about a high-severity vulnerability caused by one of its directly used dependencies. (Mention the exact library name and version in your comment)"
+    acceptable_items: ["EXT-SC-01", "EXT-SC-08"]
+    verdict: semi
+    because: "EXT-SC-01 detect「提取打包 JS 中 jQuery/Lodash/Vue/React 版本，比对 NVD」对口，app=has_component 成立。Juice Shop 的 jQuery 版本可从 bundle 拿到。命中与否取决于本地 CVE 数据是否最新 → semi。"
+    witness: "从 bundle 提取 jQuery 版本 → 对应已知 CVE。"
+  - key: "weirdCryptoChallenge"
+    name: "Weird Crypto"
+    category: "Cryptographic Issues"
+    difficulty: 2
+    tags: ""
+    planted: "Inform the shop about an algorithm or library it should definitely not use the way it does."
+    acceptable_items: ["WSTG-CRYP-04"]
+    verdict: manual
+    because: "CRYP-04 detect「MD5/SHA1/DES/RC4/ECB/硬编码密钥」对口。但 Juice Shop 这条考的是 z85/base85 这类「奇怪编码」本身；识别要读代码 → manual。"
+    witness: "解码出隐藏字符串。"
+  - key: "redirectChallenge"
+    name: "Allowlist Bypass"
+    category: "Unvalidated Redirects"
+    difficulty: 4
+    tags: "Prerequisite"
+    planted: "Enforce a redirect to a page you are not supposed to redirect to."
+    acceptable_items: ["WSTG-CLNT-04"]
+    verdict: semi
+    because: "CLNT-04 detect「跳转参数可指向任意外部域名」对口。但「绕过 allowlist」的具体手法（指 device 域名后缀）自动难 fallback → semi。"
+    witness: "让重定向跳转到非 allowlist 域名。"
+  - key: "xxeFileDisclosureChallenge"
+    name: "XXE Data Access"
+    category: "XXE"
+    difficulty: 3
+    tags: "Danger Zone"
+    planted: "Retrieve the content of C:\\Windows\\system.ini or /etc/passwd from the server."
+    acceptable_items: ["WSTG-INPV-07"]
+    verdict: semi
+    because: "INPV-07 detect 「XML 解析器未禁用外部实体，可读文件 / SSRF / OOB」完全对口。需上传/提交 XML（has_upload 成立）且读文件效果需要签发 B — 降 semi。"
+    witness: "上传含 SYSTEM \\\"file:///etc/passwd\\\" 的 XML → 文件内容回显。"
+  - key: "xxeDosChallenge"
+    name: "XXE DoS"
+    category: "XXE"
+    difficulty: 5
+    tags: "Danger Zone"
+    planted: "Give the server something to chew on for quite a while."
+    acceptable_items: []
+    verdict: na
+    because: "DoS 类按红线 11 不做，且要做的是 billion laughs —— 即使 detects 存在也不允许触发。"
+    witness: "上传带大量实体的 XML 使解析耗尽内存。"
+  - key: "yamlBombChallenge"
+    name: "Memory Bomb"
+    category: "Insecure Deserialization"
+    difficulty: 5
+    tags: "Danger Zone"
+    planted: "Drop some explosive data into a vulnerable file-handling endpoint."
+    acceptable_items: []
+    verdict: na
+    because: "DoS 类，红线 11 明确不做。"
+    witness: "触发反序列化造成内存耗尽。"
+  - key: "zeroStarsChallenge"
+    name: "Zero Stars"
+    category: "Improper Input Validation"
+    difficulty: 1
+    tags: ""
+    planted: "Give a devastating zero-star feedback to the store."
+    acceptable_items: ["WSTG-BUSL-01"]
+    verdict: manual
+    because: "「评 0 星」需要绕过前端滑块/禁用 UI —— 服务端接受 0 是 USES 一句话，但这条挑战的灵魂是「怎么绕过 UI」，不是业务逻辑错误。"
+    witness: "绕过前端限制提交 0 星评价。"
+  - key: "missingEncodingChallenge"
+    name: "Missing Encoding"
+    category: "Improper Input Validation"
+    difficulty: 1
+    tags: "Shenanigans"
+    planted: "Retrieve the photo of Bjoern's cat in \"melee combat-mode\"."
+    acceptable_items: []
+    verdict: na
+    because: "官方标 Shenanigans：非安全缺陷。"
+    witness: "按茧引导完成。"
+  - key: "svgInjectionChallenge"
+    name: "Cross-Site Imaging"
+    category: "Security Misconfiguration"
+    difficulty: 5
+    tags: "Contraption"
+    planted: "Stick cute cross-domain kittens all over our delivery boxes."
+    acceptable_items: []
+    verdict: na
+    because: "官方标 Contraption —— 依赖特定 misconfigured OTORS + // 双重具体 payload，不是 SDL 意义的安全缺陷。"
+    witness: "构造特定路径让外部图片被当作本站资源。"
+  - key: "exposedMetricsChallenge"
+    name: "Exposed Metrics"
+    category: "Observability Failures"
+    difficulty: 1
+    tags: "Good Practice"
+    planted: "Find the endpoint that serves usage data to be scraped by a popular monitoring system."
+    acceptable_items: ["WSTG-CONF-05", "WSTG-CONF-02"]
+    verdict: auto
+    because: "CONF-05 detect 写了「actuator 端点」，CONF-02 写「管理端点暴露」；/metrics 属标准管理端点点 franch。"
+    witness: "GET /metrics → 200 Prometheus 格式指标。"
+  - key: "misplacedIacFiles"
+    name: "Misplaced IaC Files"
+    category: "Security Misconfiguration"
+    difficulty: 2
+    tags: "Prerequisite"
+    planted: "Access the misplaced Infrastructure as Code files that were accidentally included in the web application deliverable."
+    acceptable_items: ["EXT-CD-01", "WSTG-CONF-04"]
+    verdict: auto
+    because: "EXT-CD-01 detect 列举了CI 配置文件（Jenkinsfile / azure-pipelines 等）；Juice Shop 的 IaC 落在 /ftp 里，同样被 CONF-04 归档目录命中。"
+    witness: "GET /ftp 下的 .tf / .yml / Dockerfile 等 → 200。"
+  - key: "freeDeluxeChallenge"
+    name: "Deluxe Fraud"
+    category: "Improper Input Validation"
+    difficulty: 3
+    tags: ""
+    planted: "Obtain a Deluxe Membership without paying for it."
+    acceptable_items: ["WSTG-BUSL-10"]
+    verdict: manual
+    because: "支付金额篡改/ariusel Membership。app=has_payment —— Juice Shop 的「支付」是模拟流程，适用性本身就可疑，且需多步。"
+    witness: "用 2889 free 流程 bought deluxe membership。"
+  - key: "csrfChallenge"
+    name: "CSRF"
+    category: "Broken Access Control"
+    difficulty: 3
+    tags: ""
+    planted: "Change the name of a user by performing Cross-Site Request Forgery from another origin."
+    acceptable_items: ["WSTG-SESS-05"]
+    verdict: semi
+    because: "SESS-05 detect 「缺 Token / Token 不校验 / SameSite 缺失」正对口。Juice Shop 的 CSRF 在密码修改 —— 需要会话态复现，降 semi。"
+    witness: "构造跨域表单改密码 → 带上受害者的 Cookie 后生效。"
+  - key: "xssBonusChallenge"
+    name: "Bonus Payload"
+    category: "XSS"
+    difficulty: 1
+    tags: "Shenanigans/Tutorial"
+    planted: "Use the bonus payload &lt;iframe width=&quot;100%&quot; height=&quot;166&quot; scrolling=&quot;no&quot; frameborder=&quot;no&quot; allow=&quot;autoplay&quot; src=&quot;https://w.soundcloud.com/player/?url=https%3A//api.soundcloud.com/tracks/771984076&amp;color=%23ff5500&amp;auto_play=true&amp;hide_related=false&amp;show_comments=true&amp;show_user=true&amp;show_reposts=false&amp;show_teaser=true&quot;&gt;&lt;/iframe&gt; in the DOM XSS challenge."
+    acceptable_items: ["WSTG-INPV-01"]
+    verdict: manual
+    because: "往 Gitter/推广面里注入——通常 Neo cross-context payload，靠人構造。"
+    witness: "在特定环境触发 alert 的额外 payload 变种。"
+  - key: "resetPasswordUvoginChallenge"
+    name: "Reset Uvogin's Password"
+    category: "Sensitive Data Exposure"
+    difficulty: 4
+    tags: "OSINT"
+    planted: "Reset Uvogin's password via the Forgot Password mechanism with the original answer to his security question."
+    acceptable_items: []
+    verdict: na
+    because: "OSINT 类密保问题，需外部情报，不是服务端缺陷。"
+    witness: "需从公开渠道推断加密问题答案。"
+  - key: "geoStalkingMetaChallenge"
+    name: "Meta Geo Stalking"
+    category: "Sensitive Data Exposure"
+    difficulty: 2
+    tags: "OSINT"
+    planted: "Determine the answer to John's security question by looking at an upload of him to the Photo Wall and use it to reset his password via the Forgot Password mechanism."
+    acceptable_items: ["EXT-DP-06"]
+    verdict: semi
+    because: "EXT-DP-06（2026-10-10 新增）已能下载对外发布的 JPEG 并本地解析 EXIF/TIFF GPS 段 —— 「不解析图片二进制」这条缺口已不成立，故不再记 gap。但本条挑战还要求「由坐标推断地点名」并用于密码重置：坐标→地名属于 OSINT 推断，「用答案改他人密码」是有副作用的写动作（红线 33 不自动触碰），两步都不在自动范围内 → semi。"
+    witness: "下载某个渠道图片，exiftool 查到 GPS 坐标 → 推断地点 → 用答案重置密码。"
+  - key: "geoStalkingVisualChallenge"
+    name: "Visual Geo Stalking"
+    category: "Sensitive Data Exposure"
+    difficulty: 2
+    tags: "OSINT"
+    planted: "Determine the answer to Emma's security question by looking at an upload of her to the Photo Wall and use it to reset her password via the Forgot Password mechanism."
+    acceptable_items: []
+    verdict: na
+    because: "需要人看图推断地理位置（OSINT）。不是HTTP 层的缺陷。"
+    witness: "人工看照片背景 → 推断地点。"
+  - key: "nullByteChallenge"
+    name: "Poison Null Byte"
+    category: "Improper Input Validation"
+    difficulty: 4
+    tags: "Prerequisite"
+    planted: "Bypass a security control with a Poison Null Byte to access a file not meant for your eyes."
+    acceptable_items: ["WSTG-BUSL-08"]
+    verdict: semi
+    because: "文件名 %00 截断。同上（通常算是 business.recon 的差分对象）。"
+    witness: "上传 xx.pdf%00.exe 绕过类型校验。"
+  - key: "lfrChallenge"
+    name: "Local File Read"
+    category: "Vulnerable Components"
+    difficulty: 5
+    tags: "OSINT/Danger Zone"
+    planted: "Gain read access to an arbitrary local file on the web server."
+    acceptable_items: ["WSTG-ATHZ-01"]
+    verdict: manual
+    because: "ATHZ-01 目录遍历/文件包含 detect 对口，但 Juice Shop 这条要走特定依赖 CVE/ jsonify 路径 + Danger Zone，常规遍历 payload 打不中 → 不抬到 auto。"
+    witness: "通过特定路径读取服务端本地文件。"
+  - key: "closeNotificationsChallenge"
+    name: "Mass Dispel"
+    category: "Miscellaneous"
+    difficulty: 1
+    tags: ""
+    planted: "Close multiple \"Challenge solved\"-notifications in one go."
+    acceptable_items: []
+    verdict: na
+    because: "官方标 Prerequisite/非漏洞类：拿到一次性赝品验证码即可完成。"
+    witness: "使用赝品一次性验证码完成任务。"
+  - key: "csafChallenge"
+    name: "Security Advisory"
+    category: "Miscellaneous"
+    difficulty: 3
+    tags: ""
+    planted: "The Juice Shop is susceptible to a known vulnerability in a library, for which an advisory has already been issued, marking the Juice Shop as known affected. A fix is still pending. Inform the shop about a suitable checksum as proof that you did your due diligence."
+    acceptable_items: []
+    verdict: na
+    because: "OSINT：找到并对照官方安全公告。"
+    witness: "检索到组件安全公告。"
+  - key: "exposedCredentialsChallenge"
+    name: "Exposed Credentials"
+    category: "Sensitive Data Exposure"
+    difficulty: 2
+    tags: ""
+    planted: "A developer was careless with hardcoding unused, but still valid credentials for a testing account on the client-side."
+    acceptable_items: ["EXT-SC-07", "EXT-CL-06", "WSTG-INFO-05"]
+    verdict: semi
+    because: "前端产物/日志里残留凭据。SC-07 detect 明确「前端或仓库中残留第三方服务密钥」；app=always 成立。但要看 goal 是「被ाली 前端能读到」还是「在特定 log」。"
+    witness: "从前端 / logs / 配置取到可用凭据。"
+  - key: "leakedApiKeyChallenge"
+    name: "Leaked API Key"
+    category: "Sensitive Data Exposure"
+    difficulty: 5
+    tags: ""
+    planted: "Inform the shop about a leaked API key. (Mention the exact key in your comment)"
+    acceptable_items: ["EXT-SC-07", "EXT-CL-06"]
+    verdict: semi
+    because: "同 Exposed Credentials 类。"
+    witness: "从响应或前端取到第三方服务 API Key。"
+  - key: "chatbotPromptInjectionChallenge"
+    name: "Chatbot Prompt Injection"
+    category: "Injection"
+    difficulty: 2
+    tags: "Good for Demos/AI/LLM"
+    planted: "Trick the chatbot into generating a coupon code for you despite its coupon policy saying otherwise."
+    acceptable_items: ["EXT-AI-02", "EXT-AI-01"]
+    verdict: semi
+    because: "EXT-AI-02 detect「用户输入可覆盖系统指令 / 越出设定角色」正对口，app=has_ai 成立（Juice Shop 有 chatbot 端点）。需向 AI 端点写入探针 —— 红线 23：受控写必须「档位 ∩ 台账」两把锁都开，故 semi。这是三款工具里 aiscan **唯一可能强过 Shannon/Strix** 的类别（它们无 AI 检查项）。"
+    witness: "向 chatbot 提问让它无视系统指令执行动作。"
+  - key: "chatbotGreedyInjectionChallenge"
+    name: "Greedy Chatbot Manipulation"
+    category: "Injection"
+    difficulty: 3
+    tags: "AI/LLM"
+    planted: "Convince the chatbot to give you a coupon of 50% or more. Because apparently a 10% max policy is just a suggestion when you ask nicely enough."
+    acceptable_items: ["EXT-AI-06", "EXT-RB-01"]
+    verdict: semi
+    because: "AI-06「无速率限制与费用耗尽」+ RB-01「接口速率限制缺失」对口。判定方式多为静态（有没有频控），与 (red) qianlínek 「说服型越狱」不完全重合 → semi。"
+    witness: "通过特定措辞让 chatbot 给出不符合策略的回答。"
+  - key: "aiDebuggingChallenge"
+    name: "AI Debugging"
+    category: "Broken Access Control"
+    difficulty: 2
+    tags: "AI/LLM"
+    planted: "Reveal some behind-the-scenes information on the chatbot as a non-admin user."
+    acceptable_items: ["EXT-AI-04", "EXT-AI-05"]
+    verdict: semi
+    because: "调试/报错信息泄露模型上下文，归 AI-04 / AI-05。"
+    witness: "让 chatbot 吐出内部提示词或检索内容。"
+  - key: "systemPromptExtractionChallenge"
+    name: "System Prompt Extraction"
+    category: "Injection"
+    difficulty: 3
+    tags: "AI/LLM"
+    planted: "Extract the chatbot's system prompt using prompt injection, then submit your findings (including any confidential sections) via the Customer Complaint form."
+    acceptable_items: ["EXT-AI-04"]
+    verdict: semi
+    because: "EXT-AI-04 detect「通过诱导提问可获取系统提示词」正对口。同样需 write 授权。"
+    witness: "诱导 chatbot 输出完整系统提示词。"
+  - key: "iacLeakedKeyChallenge"
+    name: "Login Cloud Admin"
+    category: "Sensitive Data Exposure"
+    difficulty: 4
+    tags: ""
+    planted: "Log in with the cloud admin's user account without using SQL Injection."
+    acceptable_items: ["WSTG-ATHN-02", "EXT-CD-01"]
+    verdict: semi
+    because: "IaC 文件里硬编码口令。ATHN-02「默认凭据」+ EXT-CD-01「流水线/配置泄露」能覆盖「发现这串口令」这一步；但 Juice Shop 的具体账户入口需要+jp. 保守降级到 semi。"
+    witness: "从 IaC/配置文件取到 cloud admin 口令并用于登录。"
+  - key: "vulnerableDockerImageChallenge"
+    name: "Vulnerable Infrastructure"
+    category: "Vulnerable Components"
+    difficulty: 3
+    tags: ""
+    planted: "Inform the shop about the use of a known vulnerable infrastructure component. (Identify the component as specifically as possible in your complaint)"
+    acceptable_items: ["EXT-CL-05", "EXT-CL-09"]
+    verdict: manual
+    because: "需要判定『运行环境/IaC 配置不当』——黑盒只能看到服务版本，看不到 Terraform/misconfig。EXT-CL-09 说得很清楚是「外部可判定部分」，量有限。"
+    witness: "对照 IaC/容器配置找出暴露面。"

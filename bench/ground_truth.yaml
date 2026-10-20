@@ -1,0 +1,165 @@
+# ==============================================================================
+# 内置靶场 · 已知漏洞基准（ground truth）
+# ==============================================================================
+# 用途   把「漏报率无从测量」变成每次发版可断言的数字。
+#
+# ==============================================================================
+# 这个文件为什么不许照着「引擎当前报出什么」来写
+# ==============================================================================
+# 靶场的价值全在「判据独立」这四个字上。
+# 如果 acceptable_items 是照着引擎输出填的，那测出来永远是 100% —— 那不是
+# 在测检出能力，是在测「引擎是否等于它自己」。所以每一条的填写依据必须是：
+#
+#   planted  —— 假应用（selftest_engine.Handler）里**真实存在**的缺陷
+#   witness  —— 任何人都能手工验证这个缺陷存在的最小操作
+#   acceptable_items —— 清单里**声明负责检测该缺陷**的检查项，按 detect 字段判定
+#
+# 三者缺一不可。任何一条说不清 witness 的，都不该出现在这个文件里。
+#
+# ==============================================================================
+# 两条踩过的坑（第二次写这个文件的人不必再踩一遍）
+# ==============================================================================
+# 坑一：endpoint_any 不能想当然。
+#   前端产物类发现（密钥 / 内网地址 / 存储 / DOM XSS）的 endpoint 报的是
+#   **站点根**，不是那个 .js 文件的 URL。曾经给这些条目写了
+#   endpoint_any: [app.js]，结果 4 条明明检出了的事实被算成「漏报」——
+#   靶场第一版因此把检出率虚报成 40%。教训：端点过滤只在「该事实必然
+#   表现为某个具体路径」时才写；「从产物里发现的东西」不要写。
+# 坑二：归口项要按「清单声明的检测对象」定，不是按「谁报出来的」定。
+#   robots.txt 暴露敏感路径报在 WSTG-INFO-01（搜索引擎信息泄露侦察），
+#   不是 WSTG-INFO-03；/server-status 报在 WSTG-CONF-04（敏感文件可下载）。
+#   写窄了同样会把「检出了」算成「漏报」。
+#
+# ==============================================================================
+# 检出率怎么算
+# ==============================================================================
+#   分母 = acceptable_items 非空的条目（有归口 = 本该能检出）
+#   分子 = 其中归口项真的报了发现（且端点对得上）的条目
+#   → 未被检出的分两类，报告里分开列，不许混为一谈：
+#     · 真漏报  ：有归口项、归口项跑了、就是没发现 —— 这是能力缺陷
+#     · 能力缺口：acceptable_items 为空 —— 清单里没人负责这件事（不是漏报，
+#                 是压根没有这项检查），必须显式列出，绝不能被算成「没问题」
+#
+# known_gap: true 的条目 = 当前已知未检出、且**不计入回归门槛**。
+# 它们不是「豁免」，而是记账：每次跑靶场都会把它们打印出来，
+# 直到有人补上检测能力后改成 false。
+# ==============================================================================
+
+version: v2
+range: 内置靶场（本地假应用，零外网流量）
+app_module: selftest_engine.Handler
+
+facts:
+
+  # ---- 敏感文件与配置泄露 ----
+  - id: env-file
+    planted: "/.env 可匿名读取，内容含数据库口令（DB_PASSWORD）与云访问密钥"
+    witness: "curl http://127.0.0.1:<port>/.env → 200，body 含 DB_PASSWORD=Sup3rS3cret"
+    acceptable_items: [EXT-CD-03, WSTG-CONF-04, EXT-CD-04, WSTG-CONF-03]
+    endpoint_any: [".env"]
+    critical: true
+
+  - id: git-config
+    planted: "/.git/config 可匿名读取（版本控制目录暴露）"
+    witness: "curl http://127.0.0.1:<port>/.git/config → 200，body 含 [core]"
+    acceptable_items: [EXT-CD-03, WSTG-CONF-04]
+    endpoint_any: [".git"]
+    critical: true
+
+  # ---- 服务器与元信息 ----
+  - id: server-version
+    planted: "响应头 Server: Apache/2.4.29 (Ubuntu) 泄露精确版本"
+    witness: "curl -I http://127.0.0.1:<port>/ → Server 头含版本号"
+    acceptable_items: [WSTG-INFO-02, EXT-SC-03]
+    critical: true
+
+  - id: robots-disclosure
+    planted: "robots.txt 主动声明 /admin/ 与 /internal/ 两个敏感路径"
+    witness: "curl http://127.0.0.1:<port>/robots.txt → Disallow: /admin/"
+    # 归口按清单声明：robots.txt 的暴露面属「搜索引擎信息泄露侦察」
+    acceptable_items: [WSTG-INFO-01, WSTG-INFO-03]
+    endpoint_any: ["robots"]
+    critical: true
+
+  - id: server-status
+    planted: "/server-status 服务器状态页可匿名访问"
+    witness: "curl http://127.0.0.1:<port>/server-status → 200，含 Server Status"
+    # 该路径在引擎里由「敏感文件可直接下载」上报（conf-04），属合理归口
+    acceptable_items: [WSTG-CONF-04, WSTG-INFO-03, WSTG-CONF-05]
+    endpoint_any: ["server-status"]
+    critical: true
+
+  # ---- 数据暴露 ----
+  - id: api-user-pii
+    planted: "/api/user 匿名返回 JSON，含手机号、身份证号、邮箱、住址"
+    witness: "curl 'http://127.0.0.1:<port>/api/user?uid=1' → 200，body 含 mobile/idcard"
+    acceptable_items: [EXT-DP-01, WSTG-APIT-02, WSTG-APIT-03, WSTG-ATHZ-04, WSTG-ATHZ-03]
+    endpoint_any: ["api/user"]
+    critical: true
+
+  - id: no-store-missing
+    planted: "含用户数据的响应未设 Cache-Control: no-store（可被中间层/本地缓存）"
+    witness: "curl -I 'http://127.0.0.1:<port>/api/user?uid=1' → 无 Cache-Control 头"
+    acceptable_items: [EXT-DP-04, WSTG-ATHN-06]
+    endpoint_any: ["api/user"]
+    critical: true
+
+  # ---- 前端产物泄露（不写 endpoint_any：这类发现的端点是站点根）----
+  - id: js-cloud-key
+    planted: "前端产物 /static/app.js 内嵌云访问密钥（AKIA…）"
+    witness: "curl http://127.0.0.1:<port>/static/app.js | grep AKIA"
+    acceptable_items: [EXT-CL-06, EXT-SC-07, WSTG-INFO-05]
+    critical: true
+
+  - id: js-internal-topology
+    planted: "前端产物内嵌内网地址（10.51.144.111）与数据库连接串（mysql://root:…@10.0.0.9）"
+    witness: "curl http://127.0.0.1:<port>/static/app.js | grep '10.0.0.9'"
+    acceptable_items: [EXT-CD-05, WSTG-INFO-05]
+    critical: true
+
+  - id: js-localstorage-password
+    planted: "前端把口令写入 localStorage（localStorage.setItem('password', …)）"
+    witness: "curl http://127.0.0.1:<port>/static/app.js | grep localStorage"
+    acceptable_items: [WSTG-CLNT-12]
+    critical: true
+
+  - id: js-dom-xss
+    planted: "前端用 document.write(location.hash) 把 URL hash 写入文档流（DOM XSS）"
+    witness: "curl http://127.0.0.1:<port>/static/app.js | grep document.write"
+    acceptable_items: [WSTG-CLNT-01, WSTG-CLNT-02]
+    critical: true
+
+  # ---- 响应头与配置 ----
+  - id: security-headers
+    planted: "缺失 X-Content-Type-Options / X-Frame-Options / Referrer-Policy 等安全响应头"
+    witness: "curl -I http://127.0.0.1:<port>/ → 上述头均不存在"
+    acceptable_items: [WSTG-CONF-14]
+    critical: true
+
+  # ---- 管理面与 AI 端点 ----
+  - id: admin-console
+    planted: "/admin/ 管理后台匿名可达（页面标题为中文「管理后台」）"
+    witness: "curl http://127.0.0.1:<port>/admin/ → 200，标题「管理后台」"
+    acceptable_items: [WSTG-CONF-05]
+    endpoint_any: ["admin"]
+    critical: true
+    note: "曾经漏报：响应未声明 charset，中文标题被按 Latin-1 解码成乱码，
+           「标题含管理/后台」的判据永远匹配不到。已修 decode_body。"
+
+  - id: llm-endpoint
+    planted: '/v1/models 返回 OpenAI 兼容结构（object=list, data=[]），模型网关匿名可达'
+    witness: "curl http://127.0.0.1:<port>/v1/models → 200，body 为 OpenAI 模型列表结构"
+    acceptable_items: [EXT-AI-01]
+    endpoint_any: ["v1/models", "models"]
+    critical: true
+    note: "曾经漏报：判定只看「响应里有模型推理特征」，空模型列表不含任何模型字段，
+           于是整条被静默跳过。已补「端点形态类」判据（路径 + OpenAI list 结构双命中）。"
+
+  - id: sms-bombing
+    planted: "验证码接口 /api/sms/send 可重复提交（无频率限制）"
+    witness: "连续 POST /api/sms/send → 每次都返回 200"
+    # 该事实由两项共同覆盖：RB-04 识别短信发送接口与参数，RB-01 实测缺少速率限制。
+    # 不写 endpoint_any：这两项的端点都报站点根（同坑一）。
+    acceptable_items: [EXT-RB-04, EXT-RB-01]
+    critical: true
+    note: "由两项联合覆盖：接口识别（RB-04）+ 限流实测（RB-01）。"

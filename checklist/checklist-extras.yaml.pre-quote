@@ -1,0 +1,426 @@
+# ==============================================================================
+# 安全扫描检查项总表 — 场景扩展
+# ==============================================================================
+# 用途     补充 WSTG 未覆盖、但实际攻击面与主流扫描器能力面中存在的检查项
+# 配套     checklist-wstg.yaml（骨架 116 项）
+# 视角     一律公网视角
+# 版本     v1.0 | 2026-09-20
+# 合计     46 项
+# ==============================================================================
+
+- meta:
+    version: v1.0
+    parent: checklist-wstg.yaml
+    updated: "2026-09-20"
+    total_items: 46
+    purpose: 覆盖 WSTG 未涉及的实际暴露面（云 / 供应链 / CI-CD / AI / 域名邮件 / 数据隐私 / 滥用防护）
+
+# ==============================================================================
+# EXT-SC 组件与供应链
+# ==============================================================================
+- category: EXT-SC
+  name: 组件与供应链
+  items:
+    - id: EXT-SC-01
+      name: 前端组件已知漏洞
+      app: has_component
+      detect: 提取打包 JS 中 jQuery / Lodash / Vue / React / Axios 等版本，比对 NVD / GitHub Advisory
+      verify: 脚本提取版本 + 公共漏洞库匹配；仅确认版本区间，不执行利用代码
+      level: 命中且存在可远程触发路径 → 高危；仅版本命中无法确认可达 → 中危
+      compliance: ISO 27001 A.8.8 / 等保2.0 入侵防范
+
+    - id: EXT-SC-02
+      name: 后端框架已知漏洞
+      app: has_component
+      detect: Spring / Struts2 / Shiro / FastJSON / Log4j / Jackson 等特征与版本
+      verify: 指纹确证版本 + 无破坏性验证（OOB 或版本区间比对）
+      level: 命中可 RCE 的框架漏洞且版本匹配 → 严重
+      compliance: ISO 27001 A.8.8 / 等保2.0 入侵防范
+
+    - id: EXT-SC-03
+      name: 服务器与中间件已知漏洞
+      app: always
+      detect: Nginx / Apache / Tomcat / IIS / OpenSSL 版本与已知 CVE
+      verify: Banner 确证 + CVE 影响范围比对
+      level: 可远程利用且公网可达 → 严重；仅信息泄露类 → 中危
+      compliance: ISO 27001 A.8.8
+
+    - id: EXT-SC-04
+      name: 第三方外链资源与 CDN 风险
+      app: has_client
+      detect: 外链 JS / CSS 缺少 SRI、引用公共 CDN、引用已停服域名
+      verify: 提取外链清单 + 核对域名归属与状态
+      level: 引用已停服 / 可抢注域名 → 高危；缺 SRI → 低危
+      compliance: ISO 27001 A.8.21 / 供应链安全
+
+    - id: EXT-SC-05
+      name: 依赖混淆与包管理暴露
+      app: has_cicd
+      detect: 公网可达的私服（Nexus / Artifactory）、包名冲突风险
+      verify: 访问确认 + 匿名拉取测试（不拉取业务制品）
+      level: 私服匿名可访问且可拉取内部包 → 高危
+      compliance: ISO 27001 A.8.21
+
+    - id: EXT-SC-06
+      name: 打包产物泄露源码与依赖树
+      app: always
+      detect: Source Map 未禁用、webpack 产物含完整依赖清单与业务逻辑
+      verify: 访问 .map 文件 + 确认可还原源码
+      level: 可还原完整源码含内部逻辑 → 中危（含凭据则升级高危）
+      compliance: ISO 27001 A.8.9
+
+    - id: EXT-SC-07
+      name: 第三方集成凭据泄露
+      app: always
+      detect: 前端 / 仓库中残留第三方服务密钥（地图 / 短信 / 支付 / 对象存储）
+      verify: 模式匹配提取 + 确认密钥有效性（不进行越权调用）
+      level: 确证密钥有效且权限可用 → 严重
+      compliance: PCI-DSS 3.x / ISO 27001 A.8.24
+
+    - id: EXT-SC-08
+      name: 已知被利用漏洞优先核对
+      app: has_component
+      detect: 组件是否命中 CISA KEV 等「已在实际攻击中被利用」清单
+      verify: 版本比对 + 优先级标记
+      level: 命中 KEV 且公网可达 → 严重（最高优先级处置）
+      compliance: ISO 27001 A.8.8
+
+# ==============================================================================
+# EXT-CL 云与容器
+# ==============================================================================
+- category: EXT-CL
+  name: 云与容器
+  items:
+    - id: EXT-CL-01
+      name: 云主机元数据服务可达性
+      app: has_cloud
+      detect: 通过 SSRF 或直接探测访问 169.254.169.254 / metadata 端点
+      verify: 仅确认可达性，不获取临时凭据
+      level: 确证可读取元数据 → 严重
+      compliance: 等保2.0 边界访问控制 / ISO 27001 A.8.20
+
+    - id: EXT-CL-02
+      name: 安全组与非预期端口暴露
+      app: always
+      detect: 数据库（3306/5432/6379/27017）、缓存、管理端口公网可达
+      verify: 公网测绘平台交叉确认 + 分布式探测复核
+      level: 数据库 / 缓存匿名可访问 → 严重；端口开放但需认证 → 中危
+      compliance: 等保2.0 边界访问控制
+
+    - id: EXT-CL-03
+      name: 容器 API 与管理端口暴露
+      app: has_cloud
+      detect: Docker API 2375/2376、Kubelet 10250、etcd 2379 等
+      verify: 匿名访问确认（不执行容器操作）
+      level: 确证可未授权控制 → 严重
+      compliance: 等保2.0 访问控制
+
+    - id: EXT-CL-04
+      name: K8s API Server 暴露
+      app: has_cloud
+      detect: 6443 暴露、匿名认证开启、dashboard 无鉴权
+      verify: 匿名请求 /version 与 /api 确认
+      level: 匿名可读集群资源 → 严重
+      compliance: 等保2.0 访问控制
+
+    - id: EXT-CL-05
+      name: 云服务默认域名与测试环境暴露
+      app: has_cloud
+      detect: *.aliyuncs.com / *.myqcloud.com 等默认域名指向真实业务
+      verify: 访问确认 + 与生产域名内容比对
+      level: 测试 / 预发环境公网可访问且含真实数据 → 高危
+      compliance: 等保2.0 访问控制
+
+    - id: EXT-CL-06
+      name: 云凭据泄露
+      app: has_cloud
+      detect: 前端 / 仓库 / 配置中残留 AK/SK、STS Token、临时凭据
+      verify: 模式匹配 + 仅在授权范围内确认权限边界
+      level: 确证凭据有效且可操作云资源 → 严重
+      compliance: PCI-DSS 3.x / ISO 27001 A.8.24
+
+    - id: EXT-CL-07
+      name: 镜像仓库暴露
+      app: has_cloud
+      detect: Harbor / Nexus / Registry 无鉴权可访问与拉取镜像
+      verify: 匿名目录列举确认（不拉取镜像）
+      level: 可匿名列出 / 拉取业务镜像 → 高危
+      compliance: ISO 27001 A.8.21
+
+    - id: EXT-CL-08
+      name: 对象存储签名与目录遍历
+      app: has_storage
+      detect: 签名 URL 长期有效、可越权访问他人文件、可列举对象
+      verify: 受控请求确认权限边界（不下载业务数据）
+      level: 确证可越权访问他人文件 → 高危
+      compliance: 等保2.0 数据保密性
+
+    - id: EXT-CL-09
+      name: 主机层已知漏洞（外部可判定部分）
+      app: always
+      detect: 通过 Banner / 响应特征可判定的 OS 与服务层 CVE
+      verify: 版本比对；无法确证版本的标注「不可判定」
+      level: 可远程利用且公网可达 → 高危（按可判定性调整）
+      compliance: ISO 27001 A.8.8
+
+# ==============================================================================
+# EXT-CD CI/CD 与制品
+# ==============================================================================
+- category: EXT-CD
+  name: CI/CD 与制品
+  items:
+    - id: EXT-CD-01
+      name: 流水线配置文件泄露
+      app: has_cicd
+      detect: /.github/workflows/ / .gitlab-ci.yml / Jenkinsfile / azure-pipelines.yml
+      verify: 逐路径访问 + 内容确认（区分真实文件与软 404）
+      level: 可访问且含密钥引用 / 部署逻辑 → 高危
+      compliance: ISO 27001 A.8.28 / 供应链安全
+
+    - id: EXT-CD-02
+      name: 构建产物与制品仓库暴露
+      app: has_cicd
+      detect: dist / build / release 目录、产物下载端点无鉴权
+      verify: 访问确认 + 内容有效性
+      level: 可下载内部制品 → 中危；含凭据 → 高危
+      compliance: ISO 27001 A.8.21
+
+    - id: EXT-CD-03
+      name: 版本控制与配置泄露
+      app: always
+      detect: /.git/ / .svn/ / .env / .DS_Store / web.config / application.yml
+      verify: 逐路径确认；对 .git 仅验证可访问性，不整体拖取仓库
+      level: .git 可还原源码 → 高危；.env 含凭据 → 严重；仅目录存在 → 中危
+      compliance: 等保2.0 数据保密性 / ISO 27001 A.8.9
+
+    - id: EXT-CD-04
+      name: 部署脚本与凭据残留
+      app: has_cicd
+      detect: deploy.sh / setup.sql / *.pem / *.key 等部署期文件
+      verify: 逐路径确认 + 内容类型判断
+      level: 含可用凭据或私钥 → 严重
+      compliance: PCI-DSS 3.x
+
+    - id: EXT-CD-05
+      name: 内部地址与拓扑泄露
+      app: always
+      detect: 从 JS / 错误页 / 文档中提取内网 IP、内部域名、服务名
+      verify: 汇总清单 + 标注公网可达性
+      level: 泄露完整内网拓扑 → 低危（为后续攻击提供便利，非直接危害）
+      compliance: ISO 27001 A.8.20
+
+# ==============================================================================
+# EXT-AI AI / LLM 应用
+# ==============================================================================
+- category: EXT-AI
+  name: AI / LLM 应用
+  items:
+    - id: EXT-AI-01
+      name: LLM 端点未授权访问
+      app: has_ai
+      detect: 推理 / 对话 / 向量检索端点是否需鉴权
+      verify: 无凭证请求 + 确认是否返回模型输出（不消耗大量额度）
+      level: 可未授权调用并产生输出 → 高危；仅路由可达 → 中危
+      compliance: 等保2.0 访问控制
+
+    - id: EXT-AI-02
+      name: 提示词注入（直接）
+      app: has_ai
+      detect: 用户输入可覆盖系统指令 / 越出设定角色
+      verify: 受控测试载荷 + 观察输出行为是否被改变
+      level: 可绕过安全约束并获取受限能力 → 中危；可导致越权数据访问 → 高危
+      compliance: ISO 27001 A.8.26
+
+    - id: EXT-AI-03
+      name: 提示词注入（间接 / RAG 投毒）
+      app: has_ai
+      detect: 外部内容（文档 / 网页 / 用户上传）进入上下文后可操控模型行为
+      verify: 受控投放标记内容 + 观察是否影响模型输出
+      level: 确证可借外部内容触发越权操作 → 高危
+      compliance: ISO 27001 A.8.26 / 供应链安全
+
+    - id: EXT-AI-04
+      name: 系统提示词与上下文泄露
+      app: has_ai
+      detect: 通过诱导提问可获取系统提示词、内部规则、检索到的敏感上下文
+      verify: 受控诱导 + 确认泄露内容性质
+      level: 泄露内部业务规则或他人数据 → 高危；仅泄露通用提示词 → 低危
+      compliance: 等保2.0 数据保密性
+
+    - id: EXT-AI-05
+      name: 模型输出未过滤导致数据泄露
+      app: has_ai
+      detect: 输出未做 PII / 凭据 / 内部标识过滤
+      verify: 观察输出内容形态（不导出真实 PII）
+      level: 输出含真实 PII 或凭据 → 高危
+      compliance: PIPL / 等保2.0 数据保密性
+
+    - id: EXT-AI-06
+      name: 无速率限制与费用耗尽
+      app: has_ai
+      detect: 端点无频率 / 额度限制，可被刷取造成费用损失
+      verify: 观察限流响应头与拦截行为（不做压力测试）
+      level: 完全无限制且无配额 → 中危
+      compliance: ISO 27001 A.8.6
+
+    - id: EXT-AI-07
+      name: 工具调用 / Agent 权限过宽
+      app: has_ai
+      detect: 模型可调用高风险工具（执行代码 / 读写数据 / 发消息）且无二次确认
+      verify: 人工分析工具清单与权限边界
+      level: 可借模型触发写操作或越权读 → 高危
+      compliance: 等保2.0 访问控制 / ISO 27001 A.8.2
+
+    - id: EXT-AI-08
+      name: 训练与微调数据泄露
+      app: has_ai
+      detect: 模型可复述训练语料中的敏感信息
+      verify: 受控探询（不批量提取）
+      level: 确证可复述真实 PII → 高危
+      compliance: PIPL / ISO 27001 A.8.24
+
+# ==============================================================================
+# EXT-DM 域名与邮件
+# ==============================================================================
+- category: EXT-DM
+  name: 域名与邮件
+  items:
+    - id: EXT-DM-01
+      name: SPF 记录配置
+      app: always
+      detect: SPF 缺失、~all 宽松、包含过多第三方、DNS 查询超限
+      verify: 公共递归解析查询 + 语法与策略校验
+      level: 完全缺失 → 中危（可被伪造发信）
+      compliance: ISO 27001 A.8.23
+
+    - id: EXT-DM-02
+      name: DKIM 配置
+      app: always
+      detect: 选择器缺失、密钥长度不足（<1024）、公钥可被替换
+      verify: 域名密钥查询 + 长度校验
+      level: 缺失或密钥过短 → 中危
+      compliance: ISO 27001 A.8.23
+
+    - id: EXT-DM-03
+      name: DMARC 策略
+      app: always
+      detect: 缺失、p=none 不执行、无 rua 报表地址
+      verify: TXT 记录查询 + 策略判定
+      level: p=none 或不生效 → 中危（钓鱼邮件可成功投递）
+      compliance: ISO 27001 A.8.23
+
+    - id: EXT-DM-04
+      name: 域名劫持与仿冒面
+      app: always
+      detect: 相似域名注册情况、域名到期时间、注册商锁状态
+      verify: whois 查询 + 相似域名存活探测
+      level: 高度相似的可疑域名处于活跃状态 → 中危（钓鱼风险）
+      compliance: ISO 27001 A.8.23
+
+    - id: EXT-DM-05
+      name: 邮件与门户服务暴露
+      app: always
+      detect: Webmail / 邮件网关 / 管理门户公网可达且无强认证
+      verify: 访问确认 + 认证机制检查
+      level: 管理门户无 MFA 且公网可达 → 中危；存在弱口令 → 高危
+      compliance: 等保2.0 身份鉴别
+
+    - id: EXT-DM-06
+      name: 证书透明度日志暴露
+      app: always
+      detect: 从 CT 日志提取内部 / 测试域名（crtsh 等）
+      verify: 抓取证书条目 + 逐域名可达性验证
+      level: 暴露未预期的测试 / 内部域名且可访问 → 中危
+      compliance: ISO 27001 A.8.20
+
+# ==============================================================================
+# EXT-DP 数据与隐私
+# ==============================================================================
+- category: EXT-DP
+  name: 数据与隐私
+  items:
+    - id: EXT-DP-01
+      name: 响应中明文暴露敏感数据
+      app: always
+      detect: 接口 / 页面返回 PII（手机号 / 身份证 / 地址 / 银行卡）
+      verify: 解析响应字段 + 判断是否为业务必要（仅抽样，不批量导出）
+      level: 越权或非必要暴露 PII → 高危；业务必要但未脱敏 → 中危
+      compliance: PIPL / 等保2.0 数据保密性
+
+    - id: EXT-DP-02
+      name: 日志与调试接口泄露 PII
+      app: always
+      detect: 日志端点 / 调试页 / 错误页含用户数据
+      verify: 访问确认 + 内容抽样（不保存真实 PII）
+      level: 可访问且含真实 PII → 高危
+      compliance: PIPL / ISO 27001 A.8.15
+
+    - id: EXT-DP-03
+      name: 导出功能数据范围越界
+      app: has_download
+      detect: 导出接口未限制数据范围，可一次导出全量
+      verify: 仅确认接口存在与参数结构，不实际执行全量导出
+      level: 确证可导出超出权限范围的数据 → 高危（若可执行，评估结论为「可达但主动克制」）
+      compliance: PIPL / 等保2.0 数据保密性
+
+    - id: EXT-DP-04
+      name: 含用户数据的响应被缓存
+      app: has_client
+      detect: 含用户数据的页面 / 接口缺 Cache-Control: no-store，CDN 可缓存
+      verify: 检查缓存策略 + 确认 CDN 是否实际缓存
+      level: 确证他人数据被缓存并可被第三方读取 → 高危
+      compliance: 等保2.0 剩余信息保护 / ISO 27001 A.8.24
+
+    - id: EXT-DP-05
+      name: 移动端 / 小程序接口暴露面
+      app: has_api
+      detect: 客户端专用接口鉴权强度低于 Web 端、签名可绕过
+      verify: 提取接口 + 多端对比测试
+      level: 可绕过签名或鉴权 → 高危
+      compliance: 等保2.0 访问控制
+
+# ==============================================================================
+# EXT-RB 稳健性与滥用防护
+# ==============================================================================
+- category: EXT-RB
+  name: 稳健性与滥用防护
+  items:
+    - id: EXT-RB-01
+      name: 接口速率限制缺失
+      app: has_api
+      detect: 关键接口（登录 / 短信 / 查询）无频率限制
+      verify: 观察限流响应与拦截行为（低频率，不做压测）
+      level: 完全无限制且可被滥用获利 → 中危
+      compliance: ISO 27001 A.8.6
+
+    - id: EXT-RB-02
+      name: 资源耗尽面（静态评估）
+      app: has_api
+      detect: 大文件上传无限制、深层嵌套 JSON / XML、正则回溯、无限分页
+      verify: 仅静态评估参数与限制，不实际发起资源消耗请求
+      level: 确证无限制但未实测影响 → 中危
+      compliance: ISO 27001 A.8.6
+
+    - id: EXT-RB-03
+      name: 敏感操作缺少人机校验
+      app: always
+      detect: 注册 / 登录 / 支付 / 领券无验证码或等效风控
+      verify: 观察是否存在人机校验
+      level: 缺失且业务可获利 → 中危
+      compliance: ISO 27001 A.8.23
+
+    - id: EXT-RB-04
+      name: 短信与邮件轰炸面
+      app: has_account
+      detect: 验证码接口无频率 / 次数 / 图形校验限制
+      verify: 观察限制机制（仅少量尝试，不实际轰炸）
+      level: 确证可对任意手机号高频发送 → 中危
+      compliance: ISO 27001 A.8.23
+
+    - id: EXT-RB-05
+      name: 锁定机制可被反向利用
+      app: has_login
+      detect: 可用错误密码锁定他人账号（拒绝服务）
+      verify: 观察锁定策略与解锁途径
+      level: 可无限锁定他人账号 → 中危
+      compliance: ISO 27001 A.8.6

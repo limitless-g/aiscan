@@ -1,0 +1,7 @@
+# 统一换行：仓库内一律 LF，检出时按平台转换
+* text=auto eol=lf
+
+# Windows 脚本必须保持 CRLF，否则双击执行 / Windows 脚本宿主解析异常
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+*.bat text eol=crlf

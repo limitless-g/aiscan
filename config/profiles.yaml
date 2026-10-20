@@ -1,0 +1,277 @@
+# ==============================================================================
+# 扫描行为档位配置
+# ==============================================================================
+# 用途   控制扫描强度与速率，避免打挂生产系统 / 触发风控封 IP
+# 视角   一律公网视角
+# 版本   v1.0 | 2026-09-20
+# ==============================================================================
+
+meta:
+  version: v1.0
+  default: standard
+  note: >
+    档位只影响「扫描强度与速率」，不影响「检查项清单」。
+    无论哪一档，全量检查项全部执行并逐项报备（不适用的判 N/A）。
+    档位调的是每项的探测深度与并发，不是跳过项。
+
+profiles:
+
+  # ---------------------------------------------------------------------------
+  # 安全档：生产核心系统首扫、业务高峰时段、无法确认系统抗压能力时使用
+  # ---------------------------------------------------------------------------
+  safe:
+    name: 安全档
+    risk_level: safe        # 只执行 RISK_SAFE 级检测器
+    description: 最低干扰，绝不做可能影响业务的请求。适用于生产核心系统首扫。
+    rate:
+      requests_per_second: 5          # 全局限速
+      concurrency: 2                  # 并发线程
+      per_host_rps: 3                 # 单主机限速（执行体：fingerprint._throttle）
+      timeout_seconds: 15
+      retries: 1
+      delay_between_items_ms: 200     # 检查项之间强制间隔（执行体：registry_runner._item_gap_seconds）
+    # 运行期边界封禁守门（B 类拦截：开扫时正常、扫到一半被拉黑）。
+    # ⚠ `check_every_probes` 的真实语义（2026-09-30 对齐实现，别再按字面读）：
+    #   抽检**只在检查项边界发生**，阈值的作用是「距上次抽检累计探测数不足
+    #   该值时，跳过这个边界」—— 它防止的是**抽检过密**，不是「项内每 25 次探测
+    #   就抽一次」。一个重型检查项内部连打几百次探测时，本阈值不产生任何抽检。
+    #   项内的密集探测由另一条机制兜底：每个响应顺手喂给守门，出现
+    #   「同一张非基线拦截页在 ≥2 个不同路径上重复」即**立即触发真抽检**。
+    #   落在两次抽检之间的取证由 `is_contaminated` 按封禁窗口作废（消除假通过）。
+    # 与 rate 同源 —— 都是「如何对待目标」的约束，所以放在一起。
+    boundary_guard:
+      enabled: true
+      check_every_probes: 25          # 抽检节流阈值（见下方说明，不是「每 25 次探测」）
+      backoff_seconds: []             # 安全档**不退避**：生产核心系统一旦出现封禁
+                                      # 即停、交人工确认放行，绝不靠等待硬试
+      budget_seconds: 0
+      max_rounds: 0                   # 零容忍，首次封禁即停
+      speed_step: 0.5
+      min_speed_factor: 0.1
+    redteam:
+      impact_level: L1                # 只证明「能到达」，不做深入读取。
+                                      # 生产核心系统不尝试改数据与拿控制权。
+      objectives: [READ_DATA]
+    nuclei:
+      severity_filter: [critical, high]
+      template_tags_include: [cve, misconfig, exposure]
+      template_tags_exclude: [intrusive, fuzz, dos, bruteforce]
+      rate_limit: 5
+      bulk_size: 5
+      concurrency: 2
+    http:
+      methods_allowed: [GET, HEAD, OPTIONS]   # 禁止任何写方法
+      max_params_tested: 5                    # 每接口最多测 5 个参数
+      fuzz_intensity: none
+    write_verification: false                 # 不执行受控写
+    # 黑客视角凭据获取（engine/credhunt.py）。安全档**恒不启用** ——
+    # 登录尝试会在服务端留下失败日志、并可能触发账号锁定，
+    # 这与「最低干扰、生产核心系统首扫」的定义直接冲突。
+    credential_hunt:
+      enabled: false
+      max_attempts: 0
+    notes:
+      - 禁止 POST / PUT / DELETE / PATCH
+      - 禁止目录爆破，仅探测已知路径清单
+      - 禁止任何形式的模糊测试
+      - 不尝试任何口令（含默认 / 弱口令）
+
+  # ---------------------------------------------------------------------------
+  # 标准档（默认）：常规扫描，兼顾覆盖与安全
+  # ---------------------------------------------------------------------------
+  standard:
+    name: 标准档
+    risk_level: standard    # 允许 RISK_SAFE + RISK_STANDARD 级检测器
+    description: 常规强度，覆盖绝大部分检查项，不含破坏性测试。默认档位。
+    rate:
+      requests_per_second: 20
+      concurrency: 8
+      per_host_rps: 10                # 执行体：fingerprint._throttle
+      timeout_seconds: 12
+      retries: 2
+      delay_between_items_ms: 50      # 执行体：registry_runner._item_gap_seconds
+    # 运行期边界封禁守门。默认档采用「退避 + 降速」：
+    # 只等不降速会在「封—解—封」之间空转，所以两者必须绑定。
+    boundary_guard:
+      enabled: true
+      check_every_probes: 25
+      backoff_seconds: [30, 60, 120, 300]   # 指数退避；序列耗尽即判策略级拦截
+      budget_seconds: 600                   # 整场扫描允许的总等待上限，防止无限等
+      max_rounds: 3                         # 反复被封超过 3 轮说明降速仍不够，停
+      speed_step: 0.5                       # 恢复后速率降半
+      min_speed_factor: 0.1                 # 降速下限，避免无限降
+    redteam:
+      impact_level: L2                # 证明「真的读到了数据」：读一条即止，
+                                      # 不写文件、不执行命令
+      objectives: [READ_DATA, MODIFY_DATA]
+                                      # 改数据需 ledger --allow-write 才会执行；
+                                      # 未授权时记「未能验证」，不记「未达成」
+    nuclei:
+      severity_filter: [critical, high, medium]
+      template_tags_include: [cve, misconfig, exposure, default-login, takeovers, ssl]
+      template_tags_exclude: [intrusive, fuzz, dos]
+      rate_limit: 20
+      bulk_size: 20
+      concurrency: 8
+    http:
+      methods_allowed: [GET, HEAD, OPTIONS, POST]
+      max_params_tested: 20
+      fuzz_intensity: light                   # 仅对少量参数做轻量变异
+    write_verification: controlled            # 允许受控写（须满足规格第 9 章三约束）
+    # 黑客视角凭据获取：零凭据自己找登录入口并做**极小字典**的默认口令尝试。
+    # 为什么标准档就开：真实攻击者不会等业务方递测试账号，
+    # 「默认口令可登录」本来就是要测的东西（WSTG-ATHN-02 的 verify 写的就是
+    # 「受控尝试、限次」）。代价用三重封顶控制：
+    #   ① 总尝试 ≤ 6 组（模块硬上限 12，取更小者）
+    #   ② 单账号 ≤ 2 次（模块硬上限 3）
+    #   ③ 命中验证码 / 锁定 / 频繁 → 立即停，本项记「待确认」
+    credential_hunt:
+      enabled: true
+      max_attempts: 6
+      max_per_account: 2
+      min_gap_seconds: 2.0      # 两次登录尝试的最小间隔（反频控自约束）
+      discover_login: true      # 未探到入口时，在已知路径清单内补几个 GET
+    notes:
+      - 允许 POST，但仅限只读语义的查询类接口
+      - 目录探测使用常见路径字典（约 1000 条），不做全量爆破
+      - 参数测试避开删除 / 支付 / 审批类接口
+      - 默认 / 弱口令尝试限 6 组、单账号 2 次，命中风控即停
+
+  # ---------------------------------------------------------------------------
+  # 深度档：测试环境专用，全量探测
+  # ---------------------------------------------------------------------------
+  deep:
+    name: 深度档
+    risk_level: deep        # 允许全部检测器（含受控写）
+    description: |
+      全量探测，含主动 PoC 与受控写验证。仅限测试环境或已书面授权的目标，
+      生产环境使用本档位须安全负责人显式确认。
+    rate:
+      requests_per_second: 100
+      concurrency: 20
+      per_host_rps: 50                # 执行体：fingerprint._throttle
+      timeout_seconds: 10
+      retries: 3
+      delay_between_items_ms: 0       # 执行体：registry_runner._item_gap_seconds
+    # 运行期边界封禁守门。深度档**不退避**：本档含受控写请求，
+    # 目标一旦进入封禁状态，继续发写请求的风险不可控（且后果不可逆），
+    # 所以检测到即停，交人工判断，不做任何等待重试。
+    boundary_guard:
+      enabled: true
+      check_every_probes: 15          # 深档请求密度高 → 阈值调小，少跳过检查项边界的抽检
+      backoff_seconds: []
+      budget_seconds: 0
+      max_rounds: 0                   # 零容忍
+      speed_step: 0.5
+      min_speed_factor: 0.1
+    redteam:
+      impact_level: L3                # 完整利用：执行命令并取回输出。
+                                      # 硬约束（引擎级，非文档约定）：
+                                      #   禁止持久化、禁止横向移动、利用前强制快照。
+                                      # 实现方式 = 这类步骤在注册表里不存在，
+                                      # 因此绕不过去。
+      objectives: [READ_DATA, MODIFY_DATA, TAKE_CONTROL]
+    nuclei:
+      severity_filter: [critical, high, medium, low]
+      template_tags_include: [cve, misconfig, exposure, default-login, takeovers, ssl, xss, sqli, lfi, rce]
+      template_tags_exclude: [dos]
+      rate_limit: 100
+      bulk_size: 50
+      concurrency: 20
+    http:
+      methods_allowed: [GET, HEAD, OPTIONS, POST, PUT, PATCH, DELETE]
+      max_params_tested: 100
+      fuzz_intensity: full
+    write_verification: controlled
+    # 深度档放开到模块硬上限（总 12 组 / 单账号 3 次）。
+    # 注意：**放开的是字典规模，不是停止条件** —— 命中风控信号仍然立即停。
+    credential_hunt:
+      enabled: true
+      max_attempts: 12
+      max_per_account: 3
+      min_gap_seconds: 1.5
+      discover_login: true
+    notes:
+      - 全量方法测试，含受控写验证
+      - 目录探测使用大字典（约 10000 条）
+      - 仍禁止 DoS 类模板，无论哪个档位
+      - 口令尝试总上限 12 组（模块硬上限），命中风控即停
+
+# ------------------------------------------------------------------------------
+# 本机资源预算（三个档位共用，engine/resources.py）
+# ------------------------------------------------------------------------------
+# 与上面各档位的 rate / nuclei 是**两件不同的事**，不要混：
+#   · 档位里的 rate.concurrency / nuclei.concurrency → 「别把**目标**打挂」
+#   · 这里的 worker_cap / child_*                 → 「别把**这台电脑**拖死」
+# 最终并发取两者更小者。
+#
+# 为什么默认就开低影响：一次扫描的峰值足以让整台机器不可用 ——
+# nuclei 是 Go 程序、默认按**全部逻辑核**跑，模板一多还会把堆吃到 GB 级；
+# 渲染再起一个无头浏览器。而此时用户的前台工作与扫描**同为普通优先级**，
+# 结果是「扫描在跑的时候，电脑干什么都卡」。
+#
+# 收益与代价：降优先级不牺牲任何覆盖度（只是慢一点）；封并发会拉长扫描
+# 时间。两者都会写进报告的「运行姿态」，不会静默发生。
+resource_defaults:
+  low_impact: true        # 关掉它 = 每次扫描都会占满 CPU（等价于 --full-speed）
+  cpu_share: 0.5          # 允许使用一半逻辑核；0.1~1.0
+  # child_mem_limit_mb: 768   # 子进程内存上限；留空则按「总内存/8 与 可用内存/2 取小」
+
+# ------------------------------------------------------------------------------
+# 全局硬约束（任何档位都不可突破）
+# ------------------------------------------------------------------------------
+# ⚠ 维护须知：**这里每一条都必须有代码执行体，并且要在下表写清是谁在读。**
+#   一条「配了却没人读」的硬约束比不写更危险 —— 它给出的是虚假保证：
+#   操作者据此认为「有兜底」，实际扫描器不会照做。2026-09-30 就把两条
+#   零读取点的字段补齐了实现（速率上限、停止条件），不要再退回旧写法。
+#
+#   执行体对照表（改这里必须同步核对）：
+#     forbidden_always        → aiscan.py（打印给操作者）+ 检测器注册表按 risk_level 门控
+#     rate_ceiling_rps        → engine/orchestrator.py `_apply_hard_limits()`
+#                               （收敛 requests_per_second / per_host_rps /
+#                                nuclei.rate_limit，并留痕进报告）
+#     stop_on[连续 5xx]        → engine/banguard.py `TargetHealthWatch.note_response()`
+#     stop_on[响应时间突增]     → engine/banguard.py `TargetHealthWatch.note_response()`
+#     stop_on[WAF 封禁特征]     → engine/banguard.py `BoundaryGuard`（边界封禁守门，
+#                               403/429 激增即视为封禁特征，抽检命中即处置）
+# ------------------------------------------------------------------------------
+hard_limits:
+  forbidden_always:
+    - DoS / DDoS 类模板与压测
+    - 破坏性写操作（删库、删文件、不可回滚的更新）
+    - 对第三方（非授权目标）发起请求
+    - 使用真实用户凭据以外的账号做越权测试（须用测试账号）
+    - 上传可执行文件（webshell）到目标系统
+  # 全档位速率硬上限。**执行体**：orchestrator._apply_hard_limits()。
+  # 超出即被收敛到本值，并在报告「防护有效性」一节留痕（收敛只影响耗时，
+  # 不影响检查项覆盖）。★ 这是「任何档位都不可突破」的唯一实现方式：
+  #   改档位的 rate 就能突破的，就不叫硬上限。
+  rate_ceiling_rps: 200
+  # 运行期停止条件。**执行体**：engine/banguard.py。
+  # 触发后：剩余检查项一律记「未执行」，**不得读成「通过」**；
+  # 并且报告里的措辞必须与「被边界拦截」严格区分 ——
+  #   · 被拦截     = 请求**没到达**应用（拿到的是拦截页）
+  #   · 停止条件   = 请求**到达了**应用，应用自己在报错 / 变慢
+  # 措辞互换就是写假话（研发会去查错方向）。见 report/generator._health_alert()。
+  #
+  # 每条判据都带**反误报限定**（否则正常扫描会被误停），实现与限定一一对应：
+  #   · 连续 5xx        —— 连续 10 次，中间夹一个非 5xx 即清零；
+  #                        且这 10 次必须跨 ≥2 个不同 URL（同一坏接口被反复
+  #                        探测会让单 URL 连续凑满，那说明「那个接口坏了」，
+  #                        不是「整站被压挂」）
+  #   · 响应时间突增     —— ≥10 倍基准，且连续 3 次，且绝对值 ≥0.8s；
+  #                        基准取前 20 次响应的**中位数**（用均值会被后期慢响应
+  #                        自己抬高，从而慢慢「适应」掉突增，判据永不触发）
+  #   · WAF 封禁特征     —— 由 BoundaryGuard 统一处置（403/429 激增 →
+  #                        抽检命中 → 退避 + 降速；退避耗尽则判策略级拦截）。
+  #                        ⚠ 已在边界拦截时**不启用**健康度守门：
+  #                        那种情况下每个响应都是拦截页，拦截页若返 5xx
+  #                        会被误读成「我们把目标打挂了」—— 结论会写反。
+  #                        逃生门：AISCAN_HEALTH_GUARD=off 可显式关闭健康度守门
+  #                        （**仅限一次性靶场基准**——靶场对畸形探针返 5xx 是应用的
+  #                        正常应答形态，守门会把整轮扫描拦腰截断；
+  #                        生产目标不得使用，关闭会在报告里具名披露）。
+  stop_on:
+    - 目标返回连续 10 次 5xx          # 疑似打挂，立即停止（跨 ≥2 个不同 URL）
+    - 目标响应时间突增 10 倍          # 疑似触发限流或性能问题（连续 3 次且 ≥0.8s）
+    - 出现 WAF 封禁特征（403/429 激增）  # → BoundaryGuard 退避 + 降速

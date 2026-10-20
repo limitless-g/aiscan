@@ -1,0 +1,76 @@
+# Juice Shop 靶场专用测试账号（认证态测试 / 权限矩阵，第八轮基准起用）
+#
+# 硬约束（红线 29）：凭据只走环境变量，本文件不出现任何明文口令。
+# 启动扫描前导出（Git Bash）：
+#   export JS_USER1_EMAIL=aiscan-test1@juice-sh.op
+#   export JS_USER1_PASS='AiscanTest2026!x'
+#   export JS_USER2_EMAIL=aiscan-test2@juice-sh.op
+#   export JS_USER2_PASS='AiscanTest2026!x'
+#   export JS_ADMIN_EMAIL=admin@juice-sh.op
+#   export JS_ADMIN_PASS=admin123
+#   # Windows CMD 用：set JS_USER1_EMAIL=...
+#
+# 扫描命令（沿用基准参数）：
+#   AISCAN_HEALTH_GUARD=off python aiscan.py scan --target localhost \
+#     --name JuiceShop基准8 --url http://localhost:3000 --profile deep \
+#     --accounts accounts.juice.yaml
+#
+# 实测依据（2026-10-09，全部对着 localhost:3000 验证过）：
+#   · /rest/user/login 同时接受 JSON 与表单编码 POST（后者是 aiscan
+#     login 块的提交方式），200 + 嵌套 token，sessionpool 的
+#     "token"\s*:\s*"..." 正则能从嵌套 JSON 里提取；
+#   · Juice Shop 登录不下发 Cookie，必须显式配 success 判据，
+#     否则会落到「登录响应未下发任何会话凭据」被拒收；
+#   · verify_path 用 /rest/basket/1：匿名 401 / 带token 200，有区分力。
+#     /rest/user/whoami 匿名也是 200（空 user），没有区分力，不能用。
+#   · 账号来源：test1/test2 为红队自助注册（POST /api/Users，开放注册，
+#     2026-10-09 建号并回验登录成功）；admin 为 Juice Shop 官方文档
+#     公开的种子账号，仅用于本地基准靶场。
+accounts:
+  - name: user1
+    role: customer
+    tenant: juice
+    authorized: true
+    login:
+      url: /rest/user/login
+      method: POST
+      username_field: email
+      username_env: JS_USER1_EMAIL
+      password_env: JS_USER1_PASS
+      no_form_discover: true
+      success:
+        status: 200
+        body_contains: "token"
+    verify_path: /rest/basket/1
+
+  - name: user2
+    role: customer
+    tenant: juice
+    authorized: true
+    login:
+      url: /rest/user/login
+      method: POST
+      username_field: email
+      username_env: JS_USER2_EMAIL
+      password_env: JS_USER2_PASS
+      no_form_discover: true
+      success:
+        status: 200
+        body_contains: "token"
+    verify_path: /rest/basket/1
+
+  - name: admin
+    role: admin
+    tenant: juice
+    authorized: true
+    login:
+      url: /rest/user/login
+      method: POST
+      username_field: email
+      username_env: JS_ADMIN_EMAIL
+      password_env: JS_ADMIN_PASS
+      no_form_discover: true
+      success:
+        status: 200
+        body_contains: "token"
+    verify_path: /rest/basket/1
