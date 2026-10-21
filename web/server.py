@@ -67,9 +67,11 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _serve_static(self, path: str):
         rel = path.lstrip("/")
-        if rel == "" or rel == "static":
-            rel = "static/index.html"
-        fp = (STATIC_DIR / rel).resolve()
+        if rel in ("", "static", "static/"):
+            fp = STATIC_DIR / "index.html"
+        else:
+            # rel 已含 "static/..."，基于 WEB_DIR 解析，避免重复拼接 static
+            fp = (WEB_DIR / rel).resolve()
         if not str(fp).startswith(str(STATIC_DIR.resolve())):
             self._send(403, b"forbidden")
             return

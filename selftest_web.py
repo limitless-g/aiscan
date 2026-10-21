@@ -10,6 +10,7 @@ web 控制台离线自测（不真正跑扫描，不依赖外部服务）
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -102,6 +103,13 @@ def test_server(tmp):
         with urllib.request.urlopen(base + "/") as r:
             html = r.read().decode("utf-8")
         check("首页可访问", "<title>aiscan 控制台" in html)
+        # 静态资源 served 内容 == 磁盘文件（防 _serve_static 路径拼接 bug 兜底成 index.html）
+        for rel in ("static/styles.css", "static/app.js"):
+            with urllib.request.urlopen(base + "/" + rel) as r:
+                served = r.read()
+            disk = (ROOT / "web" / rel).read_bytes()
+            check(f"静态资源 {rel} 与磁盘一致",
+                  hashlib.md5(served).hexdigest() == hashlib.md5(disk).hexdigest())
         # 创建项目 via API
         req = urllib.request.Request(base + "/api/projects", data=json.dumps(
             {"name": "API测试", "target": "api.test", "authorizer": "李四", "auth_ref": "M2"}).encode(),

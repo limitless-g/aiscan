@@ -26,8 +26,7 @@ async function loadProjects() {
     const li = document.createElement("li");
     li.dataset.id = p.id;
     if (current && current.id === p.id) li.classList.add("active");
-    li.innerHTML = `<div class="pl-name">${esc(p.name)}</div>
-      <div class="pl-target">${esc(p.target || "—")} · ${esc(p.profile)}</div>`;
+    li.innerHTML = `<span class="pl-dot"></span><div class="pl-text"><div class="pl-name">${esc(p.name)}</div><div class="pl-target">${esc(p.target || "—")} · ${esc(p.profile)}</div></div>`;
     li.onclick = () => selectProject(p.id);
     ul.appendChild(li);
   });
@@ -180,7 +179,7 @@ async function refreshOutputs() {
     const div = document.createElement("div");
     div.className = "out-item";
     const links = o.reports.map((f) =>
-      `<a data-d="${o.dir}" data-f="${f}">${esc(f.replace(/^.*_/, ""))}</a>`).join("");
+      `<a class="chip" data-d="${o.dir}" data-f="${f}">${esc(f.replace(/^.*_/, ""))}</a>`).join("");
     div.innerHTML = `<div class="ot">${esc(o.time)}</div><div class="or">${links || "<span class='hint'>无报告</span>"}</div>`;
     box.appendChild(div);
   });

@@ -8,7 +8,14 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="brand">aiscan <span>控制台</span></div>
+    <div class="brand">
+      <svg viewBox="0 0 24 24" fill="none">
+        <path d="M12 2 4 5v6c0 5 3.4 8.5 8 11 4.6-2.5 8-6 8-11V5l-8-3Z" fill="url(#bg)" stroke="#4f46e5" stroke-width="1.1"/>
+        <path d="M9 12l2 2 4-4" stroke="#fff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
+        <defs><linearGradient id="bg" x1="4" y1="2" x2="20" y2="22" gradientUnits="userSpaceOnUse"><stop stop-color="#6366f1"/><stop offset="1" stop-color="#7c3aed"/></linearGradient></defs>
+      </svg>
+      <span class="grad">aiscan</span> 控制台
+    </div>
     <div class="brand-sub">AI 驱动黑盒安全扫描 · 项目 / 账号 / 进度 / 产出</div>
     <button id="btn-new" class="btn primary">+ 新建项目</button>
   </header>
@@ -16,13 +23,30 @@
   <main class="layout">
     <!-- 左：项目列表 -->
     <aside class="sidebar">
+      <div class="side-head">
+        <svg class="logo" viewBox="0 0 24 24" fill="none">
+          <path d="M12 2 4 5v6c0 5 3.4 8.5 8 11 4.6-2.5 8-6 8-11V5l-8-3Z" fill="#4f46e5"/>
+          <path d="M9 12l2 2 4-4" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <div><div class="t">aiscan</div><div class="s">安全扫描控制台</div></div>
+      </div>
       <div class="side-title">项目</div>
       <ul id="project-list" class="project-list"></ul>
     </aside>
 
     <!-- 右：详情 -->
     <section class="content">
-      <div id="empty" class="empty">左侧选择一个项目，或点击「新建项目」。</div>
+      <div id="empty" class="empty">
+        <svg viewBox="0 0 120 120" fill="none">
+          <rect x="20" y="28" width="80" height="64" rx="8" fill="#eef2ff" stroke="#c7d2fe" stroke-width="2"/>
+          <path d="M20 44h80" stroke="#c7d2fe" stroke-width="2"/>
+          <circle cx="28" cy="36" r="2.5" fill="#a5b4fc"/><circle cx="36" cy="36" r="2.5" fill="#a5b4fc"/>
+          <path d="M40 62l8 8 16-16" stroke="#4f46e5" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M56 80h28M56 72h20" stroke="#c7d2fe" stroke-width="3" stroke-linecap="round"/>
+        </svg>
+        <div class="t1">还没有项目</div>
+        <div class="t2">点击右上角「新建项目」，录入目标域名与授权依据，即可开始一次黑盒安全扫描。</div>
+      </div>
 
       <div id="detail" class="detail hidden">
         <div class="detail-head">
