@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>aiscan 控制台</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">aiscan <span>控制台</span></div>
+    <div class="brand-sub">AI 驱动黑盒安全扫描 · 项目 / 账号 / 进度 / 产出</div>
+    <button id="btn-new" class="btn primary">+ 新建项目</button>
+  </header>
+
+  <main class="layout">
+    <!-- 左：项目列表 -->
+    <aside class="sidebar">
+      <div class="side-title">项目</div>
+      <ul id="project-list" class="project-list"></ul>
+    </aside>
+
+    <!-- 右：详情 -->
+    <section class="content">
+      <div id="empty" class="empty">左侧选择一个项目，或点击「新建项目」。</div>
+
+      <div id="detail" class="detail hidden">
+        <div class="detail-head">
+          <h2 id="d-name">—</h2>
+          <span id="d-target" class="pill"></span>
+          <span id="d-status" class="pill alt"></span>
+        </div>
+
+        <nav class="tabs">
+          <button class="tab active" data-tab="overview">概览</button>
+          <button class="tab" data-tab="accounts">账号</button>
+          <button class="tab" data-tab="scan">扫描</button>
+          <button class="tab" data-tab="outputs">产出</button>
+        </nav>
+
+        <!-- 概览 -->
+        <div id="tab-overview" class="panel">
+          <div class="grid">
+            <label>项目名<input id="f-name" /></label>
+            <label>目标域名<input id="f-target" placeholder="example.com" /></label>
+            <label>入口 URL<input id="f-url" placeholder="https://example.com" /></label>
+            <label>扫描档位
+              <select id="f-profile"><option value="safe">safe</option><option value="standard">standard</option><option value="deep">deep</option></select>
+            </label>
+            <label>扫描模式
+              <select id="f-mode"><option value="manual">manual</option><option value="auto">auto</option></select>
+            </label>
+            <label>影响级别
+              <select id="f-impact"><option>L1</option><option>L2</option><option>L3</option></select>
+            </label>
+            <label>授权人<input id="f-authorizer" /></label>
+            <label>授权依据<input id="f-authref" placeholder="邮件/工单号" /></label>
+          </div>
+          <label class="block">目标描述 / 目标范围
+            <textarea id="f-objectives" rows="3"></textarea>
+          </label>
+          <div class="checks">
+            <label><input type="checkbox" id="f-allowwrite" /> 允许受控写验证（仅靶场/授权写）</label>
+            <label><input type="checkbox" id="f-healthoff" /> 关闭健康度守门（仅本机/回环目标）</label>
+          </div>
+          <div class="row">
+            <button id="btn-save" class="btn primary">保存</button>
+            <button id="btn-ledger" class="btn">登记授权台账</button>
+            <button id="btn-del" class="btn danger">删除项目</button>
+            <span id="ov-msg" class="msg"></span>
+          </div>
+          <div id="ov-stats" class="stats-cards"></div>
+        </div>
+
+        <!-- 账号 -->
+        <div id="tab-accounts" class="panel hidden">
+          <p class="hint">口令只保存在本机安全存储（0600），不进入账号配置、不落明文。留空表示不改已有口令。</p>
+          <table class="tbl">
+            <thead><tr>
+              <th>名称</th><th>角色</th><th>租户</th><th>用户名/邮箱</th>
+              <th>登录地址</th><th>方法</th><th>口令</th><th></th>
+            </tr></thead>
+            <tbody id="acct-body"></tbody>
+          </table>
+          <button id="btn-acct-add" class="btn">+ 添加账号</button>
+          <button id="btn-acct-save" class="btn primary">保存账号</button>
+          <span id="ac-msg" class="msg"></span>
+        </div>
+
+        <!-- 扫描 -->
+        <div id="tab-scan" class="panel hidden">
+          <div class="row">
+            <button id="btn-scan" class="btn primary">▶ 启动扫描</button>
+            <span id="scan-stage" class="pill"></span>
+          </div>
+          <div class="progress"><div id="scan-bar" class="progress-bar"></div></div>
+          <pre id="scan-log" class="log"></pre>
+          <div id="scan-stats" class="stats-cards"></div>
+        </div>
+
+        <!-- 产出 -->
+        <div id="tab-outputs" class="panel hidden">
+          <div id="out-list" class="out-list"></div>
+          <div id="report-view" class="report hidden"><button id="btn-back" class="btn">← 返回列表</button><pre id="report-body" class="report-body"></pre></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- 新建项目弹窗 -->
+  <div id="modal" class="modal hidden">
+    <div class="modal-box">
+      <h3>新建项目</h3>
+      <label>项目名<input id="n-name" placeholder="示例系统" /></label>
+      <label>目标域名<input id="n-target" placeholder="example.com" /></label>
+      <label>入口 URL<input id="n-url" placeholder="https://example.com" /></label>
+      <label>扫描档位
+        <select id="n-profile"><option value="standard">standard</option><option value="safe">safe</option><option value="deep">deep</option></select>
+      </label>
+      <label>授权人<input id="n-authorizer" /></label>
+      <label>授权依据<input id="n-authref" placeholder="邮件/工单号" /></label>
+      <div class="row">
+        <button id="btn-create" class="btn primary">创建</button>
+        <button id="btn-cancel" class="btn">取消</button>
+        <span id="n-msg" class="msg"></span>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -31,3 +31,7 @@ dist/
 .DS_Store
 Thumbs.db
 .schedule_state.json
+
+# Web 控制台运行时数据（项目配置 / 账号 / 凭据 0600 / 扫描临时产物）
+# 绝不能进仓库：含本机口令与扫描归档
+web/data/
